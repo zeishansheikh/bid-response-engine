@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, FileText, Upload, RefreshCw, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { Search, FileText, Upload, RefreshCw, CheckCircle, AlertCircle, Loader2, X } from 'lucide-react';
 import { api, Requirement, notificationService } from '../services/api';
 
 interface WorkspaceProps {
@@ -15,6 +15,7 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
   const [error, setError] = React.useState<string | null>(null);
   const [successMsg, setSuccessMsg] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState('');
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const loadRequirements = async () => {
     if (!workspaceId) return;
@@ -44,6 +45,23 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
     }
   };
 
+  const handleRemoveFile = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!workspaceId || !file) return;
@@ -58,6 +76,9 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
       setSuccessMsg(`File "${fileName}" uploaded successfully!`);
       notificationService.addNotification('Document uploaded', `File "${fileName}" uploaded successfully! (Doc ready)`, 'upload');
       setFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to upload document');
@@ -127,41 +148,71 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start shrink-0">
         {/* Document Upload Area */}
-        <div className="glass-panel p-6 rounded-2xl space-y-4">
+        <div className="glass-panel p-6 rounded-2xl space-y-4 relative">
+          {file && (
+            <button
+              type="button"
+              onClick={handleRemoveFile}
+              className="absolute top-4 right-4 w-7 h-7 rounded-full bg-slate-900/80 hover:bg-[#EF4444] border border-slate-800 hover:border-[#EF4444] text-gray-400 hover:text-white flex items-center justify-center transition-all duration-200 ease-out hover:scale-105 z-30 cursor-pointer"
+              title="Remove selected file"
+            >
+              <X size={14} />
+            </button>
+          )}
+
           <h3 className="text-title-md font-semibold flex items-center gap-2">
             <Upload size={18} className="text-primary" />
             Upload RFP Document
           </h3>
           
           <form onSubmit={handleUpload} className="space-y-4">
-            <div className="border-2 border-dashed border-outline-variant hover:border-primary/50 rounded-xl p-6 text-center cursor-pointer transition-colors relative">
+            <div className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 relative overflow-hidden group ${file ? 'border-[#4F8CFF]/50 bg-[#4F8CFF]/5' : 'border-outline-variant hover:border-primary/50'}`}>
               <input 
                 type="file"
+                ref={fileInputRef}
                 accept=".pdf,.docx"
                 onChange={handleFileChange}
-                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
               />
-              <FileText size={32} className="text-outline mx-auto mb-2" />
-              <span className="text-sm font-medium block">
-                {file ? file.name : "Select PDF or DOCX file"}
-              </span>
-              <span className="text-xs text-outline block mt-1">Max file size 20MB</span>
+              {file ? (
+                <div className="flex flex-col items-center py-2 relative z-20">
+                  <div className="w-12 h-12 rounded-xl bg-[#4F8CFF]/15 border border-[#4F8CFF]/30 flex items-center justify-center text-[#4F8CFF] mb-3 shadow-[0_0_15px_rgba(79,142,255,0.1)]">
+                    <FileText size={22} />
+                  </div>
+                  <span className="text-sm font-bold text-white block max-w-[200px] truncate mb-1">
+                    {file.name}
+                  </span>
+                  <span className="text-xs text-gray-400 font-semibold block">
+                    {formatFileSize(file.size)}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center py-2">
+                  <FileText size={32} className="text-outline mx-auto mb-2 group-hover:text-[#4F8CFF] transition-colors duration-200" />
+                  <span className="text-sm font-medium block">
+                    Select PDF or DOCX file
+                  </span>
+                  <span className="text-xs text-outline block mt-1">Max file size 20MB</span>
+                </div>
+              )}
             </div>
 
-            <button 
-              type="submit"
-              disabled={!file || uploading}
-              className="w-full bg-primary-container text-on-primary py-2.5 rounded-lg font-medium hover:brightness-110 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {uploading ? (
-                <>
-                  <Loader2 className="animate-spin" size={16} />
-                  Uploading...
-                </>
-              ) : (
-                'Upload Document'
-              )}
-            </button>
+            {file && (
+              <button 
+                type="submit"
+                disabled={uploading}
+                className="w-full bg-[#4F8CFF] hover:bg-[#4F8CFF]/90 text-white py-2.5 rounded-xl font-bold transition-all flex items-center justify-center gap-2"
+              >
+                {uploading ? (
+                  <>
+                    <Loader2 className="animate-spin" size={16} />
+                    Uploading...
+                  </>
+                ) : (
+                  'Upload Document'
+                )}
+              </button>
+            )}
           </form>
         </div>
 
@@ -172,7 +223,7 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
             Process Document
           </h3>
           <p className="text-sm text-on-surface-variant leading-relaxed">
-            Extract requirements clauses, evaluation criteria, and QA sections from the uploaded RFP. GovProp.ai parses the document structure in the background.
+            Extract requirements clauses, evaluation criteria, and QA sections from the uploaded RFP. BidEngine parses the document structure in the background.
           </p>
 
           <div className="flex flex-wrap gap-3 pt-2">

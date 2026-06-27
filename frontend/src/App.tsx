@@ -64,7 +64,7 @@ export default function App() {
       case 'dashboard': return <Dashboard workspaceId={workspaceId} setWorkspaceId={setWorkspaceId} onNavigate={setCurrentView} />;
       case 'workspace': return <Workspace workspaceId={workspaceId} />;
       case 'compliance': return <Compliance workspaceId={workspaceId} />;
-      case 'analysis': return <Analysis workspaceId={workspaceId} />;
+      case 'analysis': return <Analysis workspaceId={workspaceId} onNavigate={setCurrentView} />;
       case 'win-probability': return <WinProbability workspaceId={workspaceId} />;
       case 'editor': return <Editor workspaceId={workspaceId} />;
       default: return <Landing onNavigate={setCurrentView} />;
@@ -103,7 +103,7 @@ export default function App() {
             </svg>
           </div>
           <div>
-            <span className="font-bold text-sm tracking-tight text-white block">GovProp<span className="text-[#4F8CFF]">.ai</span></span>
+            <span className="font-bold text-sm tracking-tight text-white block">BidEngine</span>
             <span className="text-[9px] text-[#94A3B8] font-medium block mt-0.5 tracking-normal">AI Powered Proposal Intelligence</span>
           </div>
         </div>

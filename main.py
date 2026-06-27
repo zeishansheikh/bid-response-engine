@@ -2,6 +2,7 @@ import os
 import time
 import shutil
 import uuid
+from datetime import datetime, timezone
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -24,6 +25,33 @@ class ScoreRequest(BaseModel):
     competitor_count: int
 
 app = FastAPI(title="AI-Powered Bid & Proposal Response Engine")
+@app.get("/", tags=["System"])
+async def root():
+    return {
+        "status": "healthy",
+        "application": "Enterprise AI-Powered Bid & Proposal Response Engine",
+        "version": "1.0.0",
+        "documentation": "/docs"
+    }
+
+@app.get("/health", tags=["System"])
+async def health_check():
+    """Production health check endpoint."""
+    return {
+        "status": "healthy",
+        "service": "BidEngine API",
+        "database": "connected",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+@app.get("/version", tags=["System"])
+async def get_version():
+    """Return application version information."""
+    return {
+        "application": "Enterprise AI-Powered Bid & Proposal Response Engine",
+        "version": "1.0.0",
+        "api": "v1"
+    }
 
 # CORS middleware for frontend communication
 app.add_middleware(
@@ -435,3 +463,126 @@ def get_workspace_dashboard(workspace_id: str):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+import json
+
+class CopilotRequest(BaseModel):
+    message: str
+
+@app.post("/workspaces/{workspace_id}/copilot", tags=["AI Services"])
+def workspace_copilot(workspace_id: str, request: CopilotRequest):
+    # 1. Verify workspace exists and get name/sector
+    ws = execute_query(
+        "SELECT id, name, sector FROM workspaces WHERE id = %s;",
+        (workspace_id,),
+        fetch=True
+    )
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    
+    workspace_name = ws[0]["name"]
+    workspace_sector = ws[0]["sector"]
+
+    # 2. Retrieve extracted requirements and compliance results
+    try:
+        query_checklist = """
+            SELECT c.id, c.workspace_id, c.requirement_id, c.match_status, c.confidence_score, c.evidence_capability_id, c.manager_override,
+                   r.requirement_text, r.category, r.source_page
+            FROM compliance_checklist c
+            JOIN requirements r ON c.requirement_id = r.id
+            WHERE c.workspace_id = %s;
+        """
+        checklist = execute_query(query_checklist, (workspace_id,), fetch=True)
+    except Exception as e:
+        print(f"Error fetching checklist: {e}")
+        checklist = []
+
+    # Format requirements and compliance checklist
+    req_lines = []
+    for idx, item in enumerate(checklist, 1):
+        req_lines.append(
+            f"Requirement {idx}: {item.get('requirement_text')} | "
+            f"Category: {item.get('category')} | "
+            f"Status: {item.get('match_status')} | "
+            f"Confidence: {item.get('confidence_score')}"
+        )
+    requirements_text = "\n".join(req_lines) if req_lines else "No compliance requirements found."
+
+    # 3. Retrieve matches using the existing RAG pipeline
+    try:
+        matches = retrieve_top_matches(request.message, top_k=5)
+    except Exception as e:
+        print(f"Error running RAG: {e}")
+        matches = []
+
+    evidence_lines = []
+    for idx, match in enumerate(matches, 1):
+        evidence_lines.append(f"Evidence {idx} (Similarity: {match['similarity']:.2f}):\n{match['chunk_text']}")
+    evidence_text = "\n\n".join(evidence_lines) if evidence_lines else "No relevant capability evidence found."
+
+    # 4. Invoke the LLM using existing services/client
+    provider = os.getenv("LLM_PROVIDER", "anthropic").lower()
+    model = os.getenv("LLM_MODEL", "claude-sonnet-4-6")
+    
+    if provider == "groq":
+        from groq import Groq
+        client = Groq()
+    else:
+        import anthropic
+        client = anthropic.Anthropic()
+
+    system_prompt = """You are an expert bid proposal writer and assistant. You help the user write, edit, rewrite, and structure technical proposals.
+You have access to the workspace information, extracted requirements, compliance evaluation status, and retrieved capability library evidence.
+Analyze the user's prompt and draft a response.
+If the user's query asks you to write, draft, generate, or rewrite a section, paragraph, or proposal content, you MUST generate the proposal text in the "draft" field.
+If the user's query is just a question, explanation, or help request, provide the explanation in the "response" field, and set "draft" to null.
+
+You MUST respond ONLY with a valid JSON object matching this schema:
+{
+  "response": "Your markdown explanation, conversational response, or summary of the action taken.",
+  "draft": "The actual proposal draft text (string) if requested/generated, otherwise null.",
+  "citations": ["list of cited requirement IDs or capability references"],
+  "sources": ["list of source titles or document references"]
+}
+Do not output any markdown code blocks, comments, or explanations outside the JSON."""
+
+    prompt = f"""User Request: {request.message}
+
+Workspace Context:
+- ID: {workspace_id}
+- Name: {workspace_name}
+- Sector: {workspace_sector}
+
+Extracted RFP Requirements & Compliance Checklist:
+{requirements_text}
+
+Retrieved Company Capabilities & Evidence (RAG matches from Capability Library):
+{evidence_text}
+
+Please generate the response and/or draft based on the above information. Respond strictly in JSON format."""
+
+    messages = [{"role": "user", "content": prompt}]
+    
+    try:
+        from services.compliance_service import call_llm, clean_json_text
+        response_text = call_llm(client, provider, model, system_prompt, messages)
+        cleaned_text = clean_json_text(response_text)
+        try:
+            result_json = json.loads(cleaned_text, strict=False)
+            return result_json
+        except Exception as json_err:
+            import re
+            match = re.search(r"\{.*\}", response_text, re.DOTALL)
+            if match:
+                return json.loads(match.group(0), strict=False)
+            raise json_err
+    except Exception as e:
+        print(f"Error calling LLM in Co-Pilot: {e}")
+        return {
+            "response": f"I encountered an error processing the request: {str(e)}",
+            "draft": None,
+            "citations": [],
+            "sources": []
+        }
+
+

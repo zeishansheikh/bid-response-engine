@@ -122,10 +122,10 @@ export function Compliance({ workspaceId }: ComplianceProps) {
         <StatusCard title="Gap" value={gapCount.toString()} subtext={`${totalCount > 0 ? Math.round((gapCount / totalCount) * 100) : 0}%`} icon={<AlertTriangle size={18} className="text-red-400" />} alert={gapCount > 0} />
       </div>
 
-      <div className="glass-panel rounded-2xl border border-[#263042] flex-1 flex flex-col overflow-hidden min-h-[350px]">
-        <div className="p-6 border-b border-[#263042]/50 shrink-0">
+      <div className="flex-1 flex flex-col min-h-[350px]">
+        <div className="pb-4 border-b border-[#263042]/30 mb-4 shrink-0">
           <h2 className="text-base font-semibold text-white">Requirements Traceability Matrix (RTM)</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Click a requirement row to expand audit data and view the matching capability evidence.</p>
+          <p className="text-xs text-gray-400 mt-1">Click a requirement row to expand audit data and view the matching capability evidence.</p>
         </div>
         
         <div className="overflow-auto flex-1 custom-scrollbar">
@@ -139,9 +139,10 @@ export function Compliance({ workspaceId }: ComplianceProps) {
               No compliance checklist items found. Run capability matching first!
             </div>
           ) : (
-            <table className="w-full text-left border-collapse min-w-[800px]">
+            <table className="w-full text-left border-collapse min-w-[950px]">
               <thead className="sticky top-0 bg-gray-950 z-10">
                 <tr className="border-b border-[#263042]/55 text-xs text-gray-400 uppercase tracking-wider bg-gray-900/40">
+                  <th className="py-3 px-6 font-semibold w-20">#</th>
                   <th className="py-3 px-6 font-semibold w-24">Page</th>
                   <th className="py-3 px-6 font-semibold w-36">Category</th>
                   <th className="py-3 px-6 font-semibold">Requirement Statement</th>
@@ -151,9 +152,10 @@ export function Compliance({ workspaceId }: ComplianceProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#263042]/30">
-                {checklist.map(row => (
+                {checklist.map((row, index) => (
                   <MatrixRow 
                     key={row.id}
+                    number={index + 1}
                     page={row.source_page}
                     category={row.category || 'other'}
                     text={row.requirement_text || ''} 
@@ -189,6 +191,7 @@ function StatusCard({ title, value, subtext, icon, alert }: { title: string, val
 }
 
 interface MatrixRowProps {
+  number: number;
   page?: number;
   category: string;
   text: string;
@@ -197,7 +200,7 @@ interface MatrixRowProps {
   evidenceId: string | null;
 }
 
-function MatrixRow({ page, category, text, status, confidence, evidenceId }: MatrixRowProps) {
+function MatrixRow({ number, page, category, text, status, confidence, evidenceId }: MatrixRowProps) {
   const [expanded, setExpanded] = React.useState(false);
 
   const getStatusConfig = (s: string) => {
@@ -220,8 +223,11 @@ function MatrixRow({ page, category, text, status, confidence, evidenceId }: Mat
         <td className="py-4 px-6 font-mono text-xs text-gray-400 align-middle whitespace-nowrap">
           <div className="flex items-center gap-2">
             {expanded ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />}
-            <span>{page || '-'}</span>
+            <span className="font-bold text-gray-400 group-hover:text-[#4F8CFF]">{number}</span>
           </div>
+        </td>
+        <td className="py-4 px-6 font-mono text-xs text-gray-405 align-middle whitespace-nowrap">
+          {page || '-'}
         </td>
         <td className="py-4 px-6 text-xs font-semibold text-primary capitalize align-middle whitespace-nowrap">{category}</td>
         <td className="py-4 px-6 text-sm text-gray-300 leading-relaxed font-medium align-middle">{text}</td>
@@ -248,16 +254,16 @@ function MatrixRow({ page, category, text, status, confidence, evidenceId }: Mat
       
       {expanded && (
         <tr className="bg-gray-900/40 border-b border-[#263042]/40">
-          <td colSpan={6} className="py-5 px-8">
+          <td colSpan={7} className="py-5 px-8">
             <div className="space-y-4 max-w-4xl">
               <div className="space-y-1">
-                <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Requirement Statement</span>
+                <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider block">Requirement Statement</span>
                 <p className="text-sm text-gray-200 leading-relaxed">{text}</p>
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
                 <div className="space-y-1">
-                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Audit Metadata</span>
+                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider block">Audit Metadata</span>
                   <div className="flex flex-wrap gap-2 pt-1">
                     <span className="text-[11px] font-semibold text-gray-400 bg-gray-950 border border-[#263042] px-2.5 py-1 rounded-lg">Page: {page || 'N/A'}</span>
                     <span className="text-[11px] font-semibold text-gray-400 bg-gray-950 border border-[#263042] px-2.5 py-1 rounded-lg">Category: <span className="capitalize text-primary">{category}</span></span>
@@ -266,7 +272,7 @@ function MatrixRow({ page, category, text, status, confidence, evidenceId }: Mat
                 </div>
 
                 <div className="space-y-1">
-                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Linked Evidence Chunk</span>
+                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider block">Linked Evidence Chunk</span>
                   <div className="pt-1">
                     {evidenceId ? (
                       <div className="flex items-center gap-2 text-xs text-[#4F8CFF] font-medium bg-[#4F8CFF]/5 border border-[#4F8CFF]/15 px-3 py-2 rounded-xl">

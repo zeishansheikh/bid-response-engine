@@ -24,12 +24,14 @@ import {
   Tooltip as RechartsTooltip
 } from 'recharts';
 import { api, ChecklistItem, DashboardData, Workspace } from '../services/api';
+import { AppView } from '../types';
 
 interface AnalysisProps {
   workspaceId: string | null;
+  onNavigate: (view: AppView) => void;
 }
 
-export function Analysis({ workspaceId }: AnalysisProps) {
+export function Analysis({ workspaceId, onNavigate }: AnalysisProps) {
   const [checklist, setChecklist] = React.useState<ChecklistItem[]>([]);
   const [dashboardData, setDashboardData] = React.useState<DashboardData | null>(null);
   const [workspaces, setWorkspaces] = React.useState<Workspace[]>([]);
@@ -111,7 +113,7 @@ export function Analysis({ workspaceId }: AnalysisProps) {
   }
 
   return (
-    <div className="space-y-8 pb-20 h-full flex flex-col">
+    <div className="space-y-8 pb-20">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-[#263042]/55 pb-6 shrink-0">
         <div>
@@ -313,18 +315,21 @@ export function Analysis({ workspaceId }: AnalysisProps) {
             subtitle="Extracted mandatory clauses" 
             count={total} 
             icon={<ShieldCheck size={20} className="text-[#4F8CFF]" />} 
+            onClick={() => onNavigate('workspace')}
           />
           <DocumentSectionCard 
             title="Evaluation Criteria" 
             subtitle="Weighted score components" 
             count={dashboardData?.score ? 5 : 0} 
             icon={<BarChart size={20} className="text-[#4F8CFF]" />} 
+            onClick={() => onNavigate('compliance')}
           />
           <DocumentSectionCard 
             title="AI Response Drafts" 
             subtitle="Ready to edit drafts" 
             count={matched + partial} 
             icon={<FileCheck size={20} className="text-[#4F8CFF]" />} 
+            onClick={() => onNavigate('editor')}
           />
         </div>
       </div>
@@ -337,11 +342,15 @@ interface DocumentCardProps {
   subtitle: string;
   count: number;
   icon: React.ReactNode;
+  onClick?: () => void;
 }
 
-function DocumentSectionCard({ title, subtitle, count, icon }: DocumentCardProps) {
+function DocumentSectionCard({ title, subtitle, count, icon, onClick }: DocumentCardProps) {
   return (
-    <div className="bg-gray-900/40 border border-[#263042] hover:border-[#4F8CFF]/50 rounded-2xl p-5 hover:bg-gray-900/80 transition-all duration-300 flex flex-col justify-between h-40 group relative overflow-hidden">
+    <div 
+      onClick={onClick}
+      className={`bg-gray-900/40 border border-[#263042] hover:border-[#4F8CFF]/50 rounded-2xl p-5 hover:bg-gray-900/80 transition-all duration-300 flex flex-col justify-between h-44 group relative overflow-hidden ${onClick ? 'cursor-pointer hover:shadow-lg hover:shadow-[#4F8CFF]/5 active:scale-[0.99]' : ''}`}
+    >
       <div className="absolute right-3 top-3 opacity-10 group-hover:opacity-20 transition-opacity pointer-events-none">
         {icon}
       </div>

@@ -139,6 +139,20 @@ export const api = {
     const res = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/dashboard`);
     if (!res.ok) throw new Error('Failed to fetch dashboard data');
     return res.json();
+  },
+
+  // Copilot API
+  async sendCopilotMessage(workspaceId: string, message: string): Promise<any> {
+    const res = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/copilot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to send copilot message');
+    }
+    return res.json();
   }
 };
 
@@ -160,7 +174,7 @@ export const notificationService = {
         const defaultNotifications: AppNotification[] = [
           {
             id: 'seed-1',
-            title: 'Welcome to GovProp.ai',
+            title: 'Welcome to BidEngine',
             message: 'Your AI Proposal Assistant is ready. Upload RFP docs to begin.',
             timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
             read: false,
