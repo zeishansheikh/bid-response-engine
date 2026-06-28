@@ -278,10 +278,10 @@ def execute_query_rest(query, params=None):
         return matches[:top_k]
 
 
-    elif q.startswith("SELECT id, requirement_text, category, source_page FROM requirements WHERE workspace_id ="):
+    elif q.startswith("SELECT id, requirement_text, category, source_page FROM requirements WHERE workspace_id =") or q.startswith("SELECT id, workspace_id, requirement_text, category, source_page FROM requirements WHERE workspace_id ="):
         ws_id = params[0]
         req = urllib.request.Request(
-            f"{SUPABASE_URL}/rest/v1/requirements?workspace_id=eq.{ws_id}&select=id,requirement_text,category,source_page",
+            f"{SUPABASE_URL}/rest/v1/requirements?workspace_id=eq.{ws_id}&select=id,workspace_id,requirement_text,category,source_page",
             headers=headers,
             method="GET"
         )
@@ -595,6 +595,58 @@ def execute_query_rest(query, params=None):
         with urllib.request.urlopen(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
+
+    elif q.startswith("SELECT workspace_id, file_path, uploaded_at FROM rfp_documents") and "WHERE" not in q:
+        req = urllib.request.Request(
+            f"{SUPABASE_URL}/rest/v1/rfp_documents?select=workspace_id,file_path,uploaded_at",
+            headers=headers,
+            method="GET"
+        )
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    elif q.startswith("SELECT workspace_id, win_probability, compliance_pass_rate, go_no_go FROM bid_scores") and "WHERE" not in q:
+        req = urllib.request.Request(
+            f"{SUPABASE_URL}/rest/v1/bid_scores?select=workspace_id,win_probability,compliance_pass_rate,go_no_go",
+            headers=headers,
+            method="GET"
+        )
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    elif q.startswith("SELECT id, file_path, uploaded_at FROM rfp_documents WHERE workspace_id ="):
+        ws_id = params[0]
+        req = urllib.request.Request(
+            f"{SUPABASE_URL}/rest/v1/rfp_documents?workspace_id=eq.{ws_id}&select=id,file_path,uploaded_at",
+            headers=headers,
+            method="GET"
+        )
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    elif "draft_sections" in q and "JOIN qa_sections" in q:
+        ws_id = params[0]
+        req = urllib.request.Request(
+            f"{SUPABASE_URL}/rest/v1/draft_sections?workspace_id=eq.{ws_id}&select=id,workspace_id,qa_section_id,draft_text,qa_sections(question_text,section_order)",
+            headers=headers,
+            method="GET"
+        )
+        with urllib.request.urlopen(req) as resp:
+            items = json.loads(resp.read().decode("utf-8"))
+            
+        flat_items = []
+        for item in items:
+            q_data = item.get("qa_sections") or {}
+            flat_items.append({
+                "id": item["id"],
+                "workspace_id": item["workspace_id"],
+                "qa_section_id": item["qa_section_id"],
+                "draft_text": item["draft_text"],
+                "question_text": q_data.get("question_text"),
+                "section_order": q_data.get("section_order")
+            })
+        flat_items.sort(key=lambda x: x.get("section_order") or 0)
+        return flat_items
 
 
     else:

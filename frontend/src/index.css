@@ -85,3 +85,135 @@ html, body, #root {
 .text-display-sm { font-size: 2.25rem; line-height: 2.75rem; font-weight: 400; }
 .text-display-md { font-size: 2.8125rem; line-height: 3.25rem; font-weight: 400; }
 .text-display-lg { font-size: 3.5rem; line-height: 4rem; font-weight: 400; }
+
+/* Light Theme Variables & Overrides */
+.theme-light {
+  --color-background: #F8FAFC;
+  --color-on-background: #0F172A;
+  --color-surface: #FFFFFF;
+  --color-on-surface: #0F172A;
+  --color-outline-variant: #E2E8F0;
+  --color-outline: #94A3B8;
+  --color-surface-container: #F1F5F9;
+  --color-surface-container-low: #F8FAFC;
+  --color-surface-container-high: #E2E8F0;
+  --color-surface-container-highest: #CBD5E1;
+}
+
+.theme-light .glass-panel {
+  background: rgba(255, 255, 255, 0.85) !important;
+  border-color: rgba(226, 232, 240, 0.8) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Global Light Mode Overrides for Hardcoded Backgrounds & Texts */
+.theme-light body,
+.theme-light #root,
+.theme-light .bg-\[\#0B1020\],
+.theme-light .bg-background {
+  background-color: #F8FAFC !important;
+  color: #0F172A !important;
+}
+
+.theme-light aside,
+.theme-light .bg-\[\#111827\] {
+  background-color: #FFFFFF !important;
+  border-color: #E2E8F0 !important;
+}
+
+.theme-light header,
+.theme-light .bg-\[\#111827\]\/30 {
+  background-color: rgba(255, 255, 255, 0.75) !important;
+  backdrop-filter: blur(16px);
+  border-color: #E2E8F0 !important;
+}
+
+.theme-light .text-white,
+.theme-light .text-gray-200 {
+  color: #0F172A !important;
+}
+
+.theme-light .text-gray-300 {
+  color: #334155 !important;
+}
+
+.theme-light .text-gray-400,
+.theme-light .text-gray-450,
+.theme-light .text-gray-500 {
+  color: #64748B !important;
+}
+
+.theme-light .border-\[\#263042\],
+.theme-light .border-\[\#263042\]\/30,
+.theme-light .border-\[\#263042\]\/40,
+.theme-light .border-\[\#263042\]\/50,
+.theme-light .border-\[\#263042\]\/75,
+.theme-light .border-outline-variant {
+  border-color: #E2E8F0 !important;
+}
+
+.theme-light .bg-gray-950\/20,
+.theme-light .bg-gray-950\/30,
+.theme-light .bg-gray-950\/40,
+.theme-light .bg-gray-950\/60,
+.theme-light .bg-gray-900\/10,
+.theme-light .bg-gray-900\/30,
+.theme-light .bg-gray-900\/35,
+.theme-light .bg-gray-900\/40 {
+  background-color: #F1F5F9 !important;
+}
+
+.theme-light .bg-gray-850,
+.theme-light .bg-gray-900 {
+  background-color: #F8FAFC !important;
+  border-color: #CBD5E1 !important;
+  color: #0F172A !important;
+}
+
+.theme-light input,
+.theme-light select,
+.theme-light textarea {
+  background-color: #FFFFFF !important;
+  border-color: #CBD5E1 !important;
+  color: #0F172A !important;
+}
+
+.theme-light input:focus,
+.theme-light select:focus,
+.theme-light textarea:focus {
+  border-color: #4F8CFF !important;
+}
+
+.theme-light .bg-\[\#1E293B\],
+.theme-light .hover\:bg-gray-900\/30:hover,
+.theme-light .hover\:bg-gray-900\/40:hover,
+.theme-light .hover\:bg-gray-900\/60:hover {
+  background-color: #E2E8F0 !important;
+}
+
+/* Editor sheet specific light styles */
+.theme-light .editor-sheet {
+  background-color: #FFFFFF !important;
+  color: #1E293B !important;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.05) !important;
+}
+
+.theme-light .editor-toolbar {
+  background-color: #F1F5F9 !important;
+  border-color: #E2E8F0 !important;
+  color: #1E293B !important;
+}
+
+.theme-light .editor-toolbar button {
+  color: #475569 !important;
+}
+
+.theme-light .editor-toolbar button:hover {
+  background-color: #E2E8F0 !important;
+  color: #0F172A !important;
+}
+
+.theme-light .bg-indigo-500\/3 {
+  background-color: rgba(79, 140, 255, 0.02) !important;
+}
+

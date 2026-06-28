@@ -15,6 +15,7 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
   const [error, setError] = React.useState<string | null>(null);
   const [successMsg, setSuccessMsg] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState('');
+  const [uploadedFileName, setUploadedFileName] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const loadRequirements = async () => {
@@ -22,6 +23,20 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
     try {
       setLoading(true);
       setError(null);
+      
+      // Fetch active document details
+      try {
+        const docDetails = await api.getWorkspaceDocument(workspaceId);
+        if (docDetails) {
+          setUploadedFileName(docDetails.original_filename);
+        } else {
+          setUploadedFileName(null);
+        }
+      } catch (docErr) {
+        console.error("Failed to load workspace document info:", docErr);
+        setUploadedFileName(null);
+      }
+
       const reqs = await api.getRequirements(workspaceId);
       setRequirements(reqs);
     } catch (err: any) {
@@ -73,17 +88,34 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
       setSuccessMsg(null);
       notificationService.addNotification('Uploading document', `Uploading "${fileName}" to workspace...`, 'upload');
       await api.uploadRfp(workspaceId, file);
-      setSuccessMsg(`File "${fileName}" uploaded successfully!`);
-      notificationService.addNotification('Document uploaded', `File "${fileName}" uploaded successfully! (Doc ready)`, 'upload');
+      setUploadedFileName(fileName);
+      setSuccessMsg(`File "${fileName}" uploaded successfully! Auto-extracting requirements...`);
+      notificationService.addNotification('Document uploaded', `File "${fileName}" uploaded successfully! Starting extraction...`, 'upload');
       setFile(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
+      }
+      setUploading(false);
+
+      // Auto-trigger extraction after successful upload
+      try {
+        setExtracting(true);
+        notificationService.addNotification('Analysis started', `Extracting requirements from "${fileName}"...`, 'extraction');
+        await api.extractRfp(workspaceId);
+        setSuccessMsg(`File "${fileName}" uploaded & requirements extracted successfully!`);
+        notificationService.addNotification('Analysis completed', `Requirements extracted from "${fileName}" successfully!`, 'extraction');
+        await loadRequirements();
+      } catch (extractErr: any) {
+        console.error('Auto-extraction failed:', extractErr);
+        setError(`Upload succeeded but extraction failed: ${extractErr.message || 'Error'}. Click "Run RFP AI Extraction" to retry.`);
+        notificationService.addNotification('Extraction failed', `Auto-extraction failed: ${extractErr.message || 'Error'}`, 'extraction');
+      } finally {
+        setExtracting(false);
       }
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to upload document');
       notificationService.addNotification('Upload failed', `Failed to upload "${fileName}": ${err.message || 'Error'}`, 'upload');
-    } finally {
       setUploading(false);
     }
   };
@@ -146,6 +178,34 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
         </div>
       )}
 
+      {/* Active Document Banner */}
+      {uploadedFileName && (
+        <div className="p-3.5 bg-[#4F8CFF]/8 border border-[#4F8CFF]/20 rounded-xl flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-[#4F8CFF]/15 border border-[#4F8CFF]/30 flex items-center justify-center text-[#4F8CFF] shrink-0">
+            <FileText size={16} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] text-[#4F8CFF] font-bold uppercase tracking-wider block">Active RFP Document</span>
+            <span className="text-xs text-white font-semibold truncate block">{uploadedFileName}</span>
+          </div>
+          <div className="shrink-0">
+            {extracting ? (
+              <span className="text-[10px] text-amber-400 font-bold flex items-center gap-1">
+                <Loader2 size={12} className="animate-spin" />
+                Extracting...
+              </span>
+            ) : requirements.length > 0 ? (
+              <span className="text-[10px] text-green-400 font-bold flex items-center gap-1">
+                <CheckCircle size={12} />
+                {requirements.length} requirements extracted
+              </span>
+            ) : (
+              <span className="text-[10px] text-gray-500 font-bold">Pending extraction</span>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start shrink-0">
         {/* Document Upload Area */}
         <div className="glass-panel p-6 rounded-2xl space-y-4 relative">
@@ -201,7 +261,7 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
               <button 
                 type="submit"
                 disabled={uploading}
-                className="w-full bg-[#4F8CFF] hover:bg-[#4F8CFF]/90 text-white py-2.5 rounded-xl font-bold transition-all flex items-center justify-center gap-2"
+                className="w-full bg-[#4F8CFF] hover:bg-[#4F8CFF]/90 text-white py-2.5 rounded-xl font-bold transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
                 {uploading ? (
                   <>
@@ -219,7 +279,7 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
         {/* Processing Actions */}
         <div className="glass-panel p-6 rounded-2xl space-y-4 lg:col-span-2">
           <h3 className="text-title-md font-semibold flex items-center gap-2">
-            <RefreshCw size={18} className="text-secondary-container" />
+            <RefreshCw size={18} className="text-[#10B981]" />
             Process Document
           </h3>
           <p className="text-sm text-on-surface-variant leading-relaxed">
@@ -230,7 +290,7 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
             <button 
               onClick={handleExtract}
               disabled={extracting}
-              className="flex items-center gap-2 bg-secondary-container text-on-secondary px-5 py-3 rounded-lg font-medium hover:brightness-110 transition-all disabled:opacity-50"
+              className="flex items-center gap-2 bg-gradient-to-r from-[#10B981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 transition-all duration-200 cursor-pointer disabled:cursor-not-allowed"
             >
               {extracting ? (
                 <>
@@ -249,9 +309,9 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
       </div>
 
       {/* Extracted Requirements List */}
-      <div className="glass-panel rounded-2xl p-6 flex-1 flex flex-col overflow-hidden min-h-[300px]">
+      <div className="flex-1 flex flex-col overflow-hidden min-h-[300px] mt-6">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 shrink-0">
-          <h2 className="text-title-md font-semibold">Extracted Requirements ({requirements.length})</h2>
+          <h2 className="text-title-md font-semibold text-white">Extracted Requirements ({requirements.length})</h2>
           
           <div className="relative w-full sm:w-64">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-outline" />
@@ -260,12 +320,12 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
               placeholder="Search requirements..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-surface-container border border-outline-variant rounded-lg pl-9 pr-4 py-1.5 focus:outline-none focus:border-primary text-xs"
+              className="w-full bg-[#111827]/40 border border-[#263042] rounded-xl pl-9 pr-4 py-2 focus:outline-none focus:border-[#4F8CFF] text-xs text-white"
             />
           </div>
         </div>
 
-        <div className="overflow-auto flex-1 custom-scrollbar border border-outline-variant rounded-xl">
+        <div className="overflow-hidden flex-1 flex flex-col">
           {loading ? (
             <div className="h-40 w-full flex items-center justify-center flex-col gap-2">
               <Loader2 className="animate-spin text-primary" size={24} />
@@ -276,24 +336,31 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
               No extracted requirements found. Run RFP extraction first!
             </div>
           ) : (
-            <table className="w-full text-left border-collapse">
-              <thead className="sticky top-0 bg-surface z-10 shadow-sm">
-                <tr className="border-b border-outline-variant text-xs text-outline uppercase tracking-wider bg-surface-container-lowest">
-                  <th className="py-3 px-4 font-semibold w-16">Page</th>
-                  <th className="py-3 px-4 font-semibold w-32">Category</th>
-                  <th className="py-3 px-4 font-semibold">Requirement Text</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-outline-variant/50">
-                {filteredRequirements.map(req => (
-                  <tr key={req.id} className="hover:bg-surface-container/30 transition-colors">
-                    <td className="py-3.5 px-4 text-sm font-mono text-outline">{req.source_page || '-'}</td>
-                    <td className="py-3.5 px-4 text-xs font-semibold text-primary capitalize">{req.category}</td>
-                    <td className="py-3.5 px-4 text-sm text-on-surface-variant leading-relaxed">{req.requirement_text}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="space-y-0 overflow-y-auto flex-1 custom-scrollbar pr-1 divide-y divide-[#263042]/30">
+              {filteredRequirements.map((req, idx) => (
+                <div 
+                  key={req.id} 
+                  className="flex items-start gap-4 py-4 first:pt-0 last:pb-0"
+                >
+                  <div className="w-6 h-6 rounded-md bg-[#4F8CFF]/10 text-[#4F8CFF] flex items-center justify-center font-bold text-xs shrink-0 mt-0.5 shadow-sm">
+                    {idx + 1}
+                  </div>
+                  <div className="flex-1 space-y-1.5">
+                    <p className="text-sm font-medium text-gray-200 leading-relaxed">
+                      {req.requirement_text}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2.5 select-none text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#4F8CFF]/60" />
+                        Page {req.source_page || '-'}
+                      </span>
+                      <span className="text-gray-650">•</span>
+                      <span className="text-[#4F8CFF]">{req.category}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>

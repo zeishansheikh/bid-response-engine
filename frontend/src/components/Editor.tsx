@@ -19,6 +19,7 @@ import {
   FileText,
   AlertCircle
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
 import { api } from '../services/api';
 
 interface EditorProps {
@@ -51,6 +52,7 @@ export function Editor({ workspaceId }: EditorProps) {
   const [lastAutoSavedTime, setLastAutoSavedTime] = React.useState<string>('');
   const [showStyleGuide, setShowStyleGuide] = React.useState(false);
   const [showCopilot, setShowCopilot] = React.useState(true);
+  const [exportStatus, setExportStatus] = React.useState<{ show: boolean; msg: string } | null>(null);
 
   // Dynamic Chat State
   const [chatMessages, setChatMessages] = React.useState<ChatMessageItem[]>([
@@ -167,43 +169,86 @@ export function Editor({ workspaceId }: EditorProps) {
     setContent(editorRef.current.innerHTML);
     setSaveSuccess(false);
   };
-  const [drafts, setDrafts] = React.useState<SavedDraft[]>([
-    {
-      id: 'draft-1',
-      timestamp: '12:10:15 PM',
-      preview: 'Our team brings over 15 years of experience...',
-      content: `<h2>3.1 Technical Approach</h2><p>Our team brings over 15 years of experience delivering secure, scalable cloud infrastructure for federal agencies. We understand the unique challenges of modernizing legacy systems while maintaining 99.99% uptime.</p>`,
-      exportedDocx: true,
-      exportedPdf: false
-    },
-    {
-      id: 'draft-2',
-      timestamp: '11:45:00 AM',
-      preview: 'Initial draft structure with outlines...',
-      content: `<h2>3.1 Technical Approach</h2><p>Initial draft structure with outlines for Phase 1, Phase 2, and Phase 3.</p>`,
-      exportedDocx: false,
-      exportedPdf: true
-    }
-  ]);
+  const [drafts, setDrafts] = React.useState<SavedDraft[]>([]);
+  const [loading, setLoading] = React.useState(false);
 
   const editorRef = React.useRef<HTMLDivElement | null>(null);
 
-  // Load initial content on mount
+  // Load chat history and workspace proposal drafts on workspaceId change
   React.useEffect(() => {
-    const initialHtml = `<h2>3.1 Technical Approach</h2>
-<p>Our team brings over 15 years of experience delivering secure, scalable cloud infrastructure for federal agencies. We understand the unique challenges of modernizing legacy systems while maintaining 99.99% uptime.</p>
+    if (!workspaceId) return;
 
-<h2>3.1.1 Phase 1: Assessment and Discovery</h2>
-<p>During the first 30 days, our engineers will conduct a comprehensive audit of the existing on-premise architecture. This includes mapping all data flows, identifying security vulnerabilities, and documenting inter-system dependencies.</p>
-
-<h2>3.1.2 Phase 2: Migration Strategy</h2>
-<p>Following the discovery phase, we will implement a phased migration approach utilizing AWS GovCloud...</p>`;
-    
-    if (editorRef.current) {
-      editorRef.current.innerHTML = initialHtml;
+    // 1. Load Chat History from localStorage
+    const stored = localStorage.getItem(`govprop_chat_${workspaceId}`);
+    if (stored) {
+      setChatMessages(JSON.parse(stored));
+    } else {
+      setChatMessages([
+        {
+          id: 'msg-init',
+          role: 'assistant',
+          content: "Hello! I am your AI Proposal Co-Pilot. I have analyzed your workspace, extracted RFP requirements, and RAG capabilities. How can I help you write, refine, or verify your proposal today?"
+        }
+      ]);
     }
-    setContent(initialHtml);
-  }, []);
+
+    // 2. Load Draft Proposal Content from Supabase
+    const loadProposal = async () => {
+      try {
+        setLoading(true);
+        const data = await api.getWorkspaceProposal(workspaceId);
+        if (data && data.length > 0) {
+          let html = '';
+          data.forEach((item: any) => {
+            html += `<h2>${item.question_text || 'Proposal Section'}</h2>`;
+            html += `<p>${item.draft_text || '[Empty Section]'}</p>\n`;
+          });
+          setContent(html);
+          if (editorRef.current) {
+            editorRef.current.innerHTML = html;
+          }
+
+          // Build saved drafts list from sections
+          const historyDrafts = data.map((item: any, idx: number) => ({
+            id: item.id || `draft-${idx}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+            preview: (item.draft_text || '').substring(0, 50) + '...',
+            content: `<h2>${item.question_text || 'Section'}</h2><p>${item.draft_text || ''}</p>`,
+            exportedDocx: false,
+            exportedPdf: false
+          }));
+          setDrafts(historyDrafts);
+        } else {
+          // Default instruction block if no drafts generated yet
+          const welcomeHtml = `<h2>Active Proposal Outline</h2>
+<p>No proposal sections have been drafted yet. To generate your proposal draft automatically:</p>
+<ul>
+  <li>Go to the <strong>Compliance Matrix</strong> tab.</li>
+  <li>Click the <strong>Match Capabilities</strong> button to match requirements with your RAG library evidence.</li>
+  <li>The AI will automatically draft responses for each QA section and load them here.</li>
+</ul>
+<p>Alternatively, you can start typing directly in this editor, or use the <strong>AI Proposal Co-Pilot</strong> chat on the right to assist you in drafting specific sections.</p>`;
+          setContent(welcomeHtml);
+          if (editorRef.current) {
+            editorRef.current.innerHTML = welcomeHtml;
+          }
+          setDrafts([]);
+        }
+      } catch (err) {
+        console.error("Failed to load proposal drafts:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProposal();
+  }, [workspaceId]);
+
+  // Persist chat messages to localStorage whenever they change
+  React.useEffect(() => {
+    if (!workspaceId || chatMessages.length === 0) return;
+    localStorage.setItem(`govprop_chat_${workspaceId}`, JSON.stringify(chatMessages));
+  }, [chatMessages, workspaceId]);
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     setContent(e.currentTarget.innerHTML);
@@ -300,18 +345,91 @@ export function Editor({ workspaceId }: EditorProps) {
     return text.substring(0, 50).replace(/\n/g, ' ') + (text.length > 50 ? '...' : '');
   };
 
-  // Export DOCX handler
-  const handleExportDocx = () => {
-    // 1. Trigger simulated file download
-    const blob = new Blob([content], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-    const url = URL.createObjectURL(blob);
+  // Helper to handle native save file picker with anchor fallback
+  const triggerDownload = async (filename: string, fileContent: string, format: 'pdf' | 'docx') => {
+    const mimeType = format === 'pdf' 
+      ? 'application/pdf' 
+      : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+    let fileBlob: Blob;
+    let rawData: any;
+
+    if (format === 'pdf') {
+      // Create binary PDF via jsPDF
+      const doc = new jsPDF();
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      
+      // Parse HTML to plain text
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = fileContent;
+      const plainText = tempDiv.innerText || tempDiv.textContent || '';
+      
+      const lines = doc.splitTextToSize(plainText, 180);
+      let y = 20;
+      lines.forEach((line: string) => {
+        if (y > 280) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.text(line, 14, y);
+        y += 6;
+      });
+      
+      const arrayBuffer = doc.output('arraybuffer');
+      fileBlob = new Blob([arrayBuffer], { type: 'application/pdf' });
+      rawData = arrayBuffer;
+    } else {
+      fileBlob = new Blob([fileContent], { type: mimeType });
+      rawData = fileBlob;
+    }
+
+    // 1. Try File System Access API for custom path selection
+    if ('showSaveFilePicker' in window) {
+      try {
+        const fileHandle = await (window as any).showSaveFilePicker({
+          suggestedName: filename,
+          types: [{
+            description: format === 'pdf' ? 'PDF Document' : 'Word Document',
+            accept: { [mimeType]: [`.${format}`] }
+          }]
+        });
+        const writable = await fileHandle.createWritable();
+        await writable.write(rawData);
+        await writable.close();
+        
+        // Show success toast
+        setExportStatus({ show: true, msg: `${format.toUpperCase()} Proposal Saved Successfully!` });
+        setTimeout(() => setExportStatus(null), 3000);
+        return true;
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          return true; // Cancelled
+        }
+        console.warn("showSaveFilePicker aborted or failed, falling back", err);
+      }
+    }
+
+    // 2. Fallback to default downloads folder
+    const url = URL.createObjectURL(fileBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'technical_proposal.docx';
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+
+    // Show success toast
+    setExportStatus({ show: true, msg: `${format.toUpperCase()} Proposal Saved Successfully!` });
+    setTimeout(() => setExportStatus(null), 3000);
+    return false;
+  };
+
+  // Export DOCX handler
+  const handleExportDocx = async () => {
+    // Trigger download (saves to Downloads folder or custom path chosen by user)
+    await triggerDownload('technical_proposal.docx', content, 'docx');
 
     // 2. Mark current draft in list as exported as DOCX
     const now = new Date();
@@ -336,22 +454,14 @@ export function Editor({ workspaceId }: EditorProps) {
   };
 
   // Export PDF handler
-  const handleExportPdf = () => {
-    // 1. Trigger simulated file download
-    const blob = new Blob([content], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'technical_proposal.pdf';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+  const handleExportPdf = async () => {
+    // Trigger download (saves to Downloads folder or custom path chosen by user)
+    await triggerDownload('technical_proposal.pdf', content, 'pdf');
 
     // 2. Mark current draft as exported as PDF
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
-
+ 
     setDrafts(prev => {
       if (prev.length > 0 && prev[0].content === content) {
         return prev.map((d, idx) => idx === 0 ? { ...d, exportedPdf: true } : d);
@@ -859,6 +969,15 @@ function ChatMessage({
           </div>
         )}
       </div>
+
+      {exportStatus?.show && (
+        <div className="fixed bottom-6 right-6 bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 z-[9999] border border-emerald-400/20 animate-fade-in-up">
+          <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
+            <CheckSquare size={13} className="text-white" />
+          </div>
+          <span className="text-xs font-bold tracking-wide">{exportStatus.msg}</span>
+        </div>
+      )}
     </div>
   );
 }

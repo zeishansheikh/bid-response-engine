@@ -5,7 +5,10 @@ export type AppView =
   | 'compliance'
   | 'analysis'
   | 'win-probability'
-  | 'editor';
+  | 'editor'
+  | 'reports'
+  | 'settings'
+  | 'history';
 
 export interface NavContextType {
   currentView: AppView;

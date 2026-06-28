@@ -2,6 +2,7 @@ import os
 import time
 import shutil
 import uuid
+import re
 from datetime import datetime, timezone
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -93,6 +94,103 @@ def get_all_workspaces():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/workspaces/history")
+def get_workspaces_history():
+    try:
+        workspaces = execute_query(
+            "SELECT id, name, sector, status, created_at FROM workspaces;",
+            fetch=True
+        ) or []
+        
+        docs = execute_query(
+            "SELECT workspace_id, file_path, uploaded_at FROM rfp_documents;",
+            fetch=True
+        ) or []
+        
+        scores = execute_query(
+            "SELECT workspace_id, win_probability, compliance_pass_rate, go_no_go FROM bid_scores;",
+            fetch=True
+        ) or []
+        
+        doc_map = {d["workspace_id"]: d for d in docs}
+        score_map = {s["workspace_id"]: s for s in scores}
+        
+        history = []
+        for ws in workspaces:
+            ws_id = ws["id"]
+            doc = doc_map.get(ws_id)
+            score = score_map.get(ws_id)
+            
+            rfp_name = "Pending Upload"
+            upload_date = None
+            if doc:
+                file_path = doc["file_path"]
+                base_name = os.path.basename(file_path)
+                if len(base_name) > 37 and base_name[36] == '_':
+                    rfp_name = base_name[37:]
+                else:
+                    rfp_name = base_name
+                upload_date = doc["uploaded_at"]
+                
+            history.append({
+                "workspace_id": ws_id,
+                "workspace_name": ws["name"],
+                "sector": ws["sector"],
+                "rfp_name": rfp_name,
+                "upload_date": upload_date.isoformat() if upload_date and not isinstance(upload_date, str) else upload_date,
+                "win_probability": score["win_probability"] if score else None,
+                "compliance_pct": score["compliance_pass_rate"] if score else None,
+                "status": ws["status"],
+                "recommendation": score["go_no_go"] if score else None,
+                "created_at": ws["created_at"].isoformat() if ws["created_at"] and not isinstance(ws["created_at"], str) else ws["created_at"]
+            })
+        return history
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/workspaces/{workspace_id}/document")
+def get_workspace_document(workspace_id: str):
+    ws = execute_query("SELECT id FROM workspaces WHERE id = %s;", (workspace_id,), fetch=True)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+        
+    doc = execute_query(
+        "SELECT id, file_path, uploaded_at FROM rfp_documents WHERE workspace_id = %s;",
+        (workspace_id,),
+        fetch=True
+    )
+    if not doc:
+        return None
+        
+    file_path = doc[0]["file_path"]
+    base_name = os.path.basename(file_path)
+    if len(base_name) > 37 and base_name[36] == '_':
+        original_filename = base_name[37:]
+    else:
+        original_filename = base_name
+        
+    return {
+        "id": doc[0]["id"],
+        "file_path": file_path,
+        "original_filename": original_filename,
+        "uploaded_at": doc[0]["uploaded_at"]
+    }
+
+@app.get("/workspaces/{workspace_id}/proposal")
+def get_workspace_proposal(workspace_id: str):
+    ws = execute_query("SELECT id FROM workspaces WHERE id = %s;", (workspace_id,), fetch=True)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+        
+    query = """
+        SELECT d.id, d.workspace_id, d.qa_section_id, d.draft_text, q.question_text, q.section_order
+        FROM draft_sections d
+        JOIN qa_sections q ON d.qa_section_id = q.id
+        WHERE d.workspace_id = %s;
+    """
+    result = execute_query(query, (workspace_id,), fetch=True)
+    return result or []
+
 @app.post("/workspaces/{workspace_id}/upload")
 def upload_rfp_document(workspace_id: str, file: UploadFile = File(...)):
     # Verify workspace exists
@@ -104,8 +202,13 @@ def upload_rfp_document(workspace_id: str, file: UploadFile = File(...)):
     if file_ext not in [".pdf", ".docx"]:
         raise HTTPException(status_code=400, detail="Only PDF and DOCX files are supported.")
         
-    # Generate unique filename to avoid conflicts
-    unique_filename = f"{uuid.uuid4()}{file_ext}"
+    # Sanitize the original filename to embed safely
+    safe_basename = os.path.basename(file.filename)
+    safe_basename = re.sub(r'[^a-zA-Z0-9._\s-]', '', safe_basename).strip()
+    safe_basename = re.sub(r'[\s-]+', '_', safe_basename)
+    
+    # Generate unique filename to avoid conflicts and keep original name
+    unique_filename = f"{uuid.uuid4()}_{safe_basename}"
     dest_path = os.path.join(UPLOAD_DIR, unique_filename)
     
     try:

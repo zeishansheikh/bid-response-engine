@@ -7,11 +7,12 @@ import {
   LineChart, 
   Target, 
   FileEdit,
-  Settings,
+  Settings as SettingsIcon,
   Bell,
   Search,
   LogOut,
-  ChevronRight
+  ChevronRight,
+  History as LucideHistory
 } from 'lucide-react';
 import { Dashboard } from './components/Dashboard';
 import { Workspace } from './components/Workspace';
@@ -20,6 +21,9 @@ import { Analysis } from './components/Analysis';
 import { WinProbability } from './components/WinProbability';
 import { Editor } from './components/Editor';
 import { Landing } from './components/Landing';
+import { Reports } from './components/Reports';
+import { Settings } from './components/Settings';
+import { History } from './components/History';
 import { motion, AnimatePresence } from 'motion/react';
 import { api, Workspace as WorkspaceType, notificationService, AppNotification } from './services/api';
 
@@ -30,6 +34,14 @@ export default function App() {
   const [notifications, setNotifications] = React.useState<AppNotification[]>([]);
   const [showNotifications, setShowNotifications] = React.useState(false);
 
+  // Load theme and company parameters from localStorage
+  const [theme, setTheme] = React.useState(() => {
+    return localStorage.getItem('bidengine_theme') || 'dark';
+  });
+  const [companyName, setCompanyName] = React.useState(() => {
+    return localStorage.getItem('bidengine_company_name') || 'Acme Federal Solutions';
+  });
+
   const loadNotifications = () => {
     setNotifications(notificationService.getNotifications());
   };
@@ -37,8 +49,28 @@ export default function App() {
   React.useEffect(() => {
     loadNotifications();
     window.addEventListener('notifications-updated', loadNotifications);
-    return () => window.removeEventListener('notifications-updated', loadNotifications);
+    
+    // Listen for settings-updated events to propagate company name and theme changes instantly
+    const handleSettingsUpdate = () => {
+      setTheme(localStorage.getItem('bidengine_theme') || 'dark');
+      setCompanyName(localStorage.getItem('bidengine_company_name') || 'Acme Federal Solutions');
+    };
+    window.addEventListener('settings-updated', handleSettingsUpdate);
+
+    return () => {
+      window.removeEventListener('notifications-updated', loadNotifications);
+      window.removeEventListener('settings-updated', handleSettingsUpdate);
+    };
   }, []);
+
+  // Update theme class on HTML element
+  React.useEffect(() => {
+    if (theme === 'light') {
+      document.documentElement.classList.add('theme-light');
+    } else {
+      document.documentElement.classList.remove('theme-light');
+    }
+  }, [theme]);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -54,20 +86,51 @@ export default function App() {
     }
   };
 
+  // Hash-based routing to support deep-linking and browser back/forward buttons
+  const navigateToView = (view: AppView) => {
+    window.location.hash = `#/${view}`;
+  };
+
   React.useEffect(() => {
     loadWorkspaces();
   }, [workspaceId]);
 
+  React.useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace('#/', '');
+      if (hash) {
+        const validViews: AppView[] = [
+          'landing', 'dashboard', 'workspace', 'compliance', 
+          'analysis', 'win-probability', 'editor', 'reports', 'settings', 'history'
+        ];
+        if (validViews.includes(hash as AppView)) {
+          setCurrentView(hash as AppView);
+          return;
+        }
+      }
+      setCurrentView('landing');
+    };
+
+    // Initialize routing on mount
+    handleHashChange();
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   const renderView = () => {
     switch (currentView) {
-      case 'landing': return <Landing onNavigate={setCurrentView} />;
-      case 'dashboard': return <Dashboard workspaceId={workspaceId} setWorkspaceId={setWorkspaceId} onNavigate={setCurrentView} />;
+      case 'landing': return <Landing onNavigate={navigateToView} />;
+      case 'dashboard': return <Dashboard workspaceId={workspaceId} setWorkspaceId={setWorkspaceId} onNavigate={navigateToView} />;
       case 'workspace': return <Workspace workspaceId={workspaceId} />;
       case 'compliance': return <Compliance workspaceId={workspaceId} />;
-      case 'analysis': return <Analysis workspaceId={workspaceId} onNavigate={setCurrentView} />;
+      case 'analysis': return <Analysis workspaceId={workspaceId} onNavigate={navigateToView} />;
       case 'win-probability': return <WinProbability workspaceId={workspaceId} />;
       case 'editor': return <Editor workspaceId={workspaceId} />;
-      default: return <Landing onNavigate={setCurrentView} />;
+      case 'reports': return <Reports workspaceId={workspaceId} />;
+      case 'settings': return <Settings />;
+      case 'history': return <History workspaceId={workspaceId} setWorkspaceId={setWorkspaceId} onNavigate={navigateToView} />;
+      default: return <Landing onNavigate={navigateToView} />;
     }
   };
 
@@ -114,49 +177,55 @@ export default function App() {
             icon={<LayoutDashboard size={16} />} 
             label="Dashboard" 
             active={currentView === 'dashboard'} 
-            onClick={() => setCurrentView('dashboard')} 
+            onClick={() => navigateToView('dashboard')} 
           />
           <NavItem 
             icon={<Briefcase size={16} />} 
             label="Workspaces" 
             active={currentView === 'workspace'} 
-            onClick={() => setCurrentView('workspace')} 
+            onClick={() => navigateToView('workspace')} 
           />
           <NavItem 
             icon={<ShieldCheck size={16} />} 
             label="Compliance Matrix" 
             active={currentView === 'compliance'} 
-            onClick={() => setCurrentView('compliance')} 
+            onClick={() => navigateToView('compliance')} 
           />
           <NavItem 
             icon={<LineChart size={16} />} 
             label="RFP Analysis" 
             active={currentView === 'analysis'} 
-            onClick={() => setCurrentView('analysis')} 
+            onClick={() => navigateToView('analysis')} 
           />
           <NavItem 
             icon={<Target size={16} />} 
             label="Win Probability" 
             active={currentView === 'win-probability'} 
-            onClick={() => setCurrentView('win-probability')} 
+            onClick={() => navigateToView('win-probability')} 
           />
           <NavItem 
             icon={<FileEdit size={16} />} 
             label="Proposal Editor" 
             active={currentView === 'editor'} 
-            onClick={() => setCurrentView('editor')} 
+            onClick={() => navigateToView('editor')} 
           />
           <NavItem 
             icon={<LineChart size={16} />} 
             label="Reports" 
-            active={false} 
-            onClick={() => {}} 
+            active={currentView === 'reports'} 
+            onClick={() => navigateToView('reports')} 
           />
           <NavItem 
-            icon={<Settings size={16} />} 
+            icon={<SettingsIcon size={16} />} 
             label="Settings" 
-            active={false} 
-            onClick={() => {}} 
+            active={currentView === 'settings'} 
+            onClick={() => navigateToView('settings')} 
+          />
+          <NavItem 
+            icon={<LucideHistory size={16} />} 
+            label="History" 
+            active={currentView === 'history'} 
+            onClick={() => navigateToView('history')} 
           />
         </div>
 
@@ -194,7 +263,7 @@ export default function App() {
               </div>
               <div>
                 <span className="font-semibold text-xs text-white block">Ahsan Maqsood</span>
-                <span className="text-[10px] text-gray-500 block mt-0.5 font-medium">Proposal Manager</span>
+                <span className="text-[10px] text-gray-500 block mt-0.5 font-medium truncate max-w-[160px]">Proposal Manager @ {companyName}</span>
               </div>
             </div>
             <button className="text-gray-500 hover:text-white transition-colors cursor-pointer">
@@ -221,6 +290,12 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
+            {/* Dynamic Company Badge */}
+            <div className="hidden md:flex items-center gap-1.5 px-3 py-2 bg-gray-900 border border-[#263042] rounded-xl text-xs font-semibold text-gray-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#4F8CFF] animate-pulse" />
+              {companyName}
+            </div>
+
             {workspaces.length > 0 && (
               <div className="relative">
                 <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[#4F8CFF]">

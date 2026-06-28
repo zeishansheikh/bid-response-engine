@@ -153,6 +153,34 @@ export const api = {
       throw new Error(err.detail || 'Failed to send copilot message');
     }
     return res.json();
+  },
+
+  // Health
+  async getHealth(): Promise<any> {
+    const res = await fetch(`${API_BASE_URL}/health`);
+    if (!res.ok) throw new Error('Failed to fetch health status');
+    return res.json();
+  },
+
+  // RFP History API
+  async getHistory(): Promise<any[]> {
+    const res = await fetch(`${API_BASE_URL}/workspaces/history`);
+    if (!res.ok) throw new Error('Failed to fetch workspaces history');
+    return res.json();
+  },
+
+  // Document Details API
+  async getWorkspaceDocument(workspaceId: string): Promise<any> {
+    const res = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/document`);
+    if (!res.ok) throw new Error('Failed to fetch workspace document info');
+    return res.json();
+  },
+
+  // Proposal Draft Sections API
+  async getWorkspaceProposal(workspaceId: string): Promise<any[]> {
+    const res = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/proposal`);
+    if (!res.ok) throw new Error('Failed to fetch workspace proposal drafts');
+    return res.json();
   }
 };
 
