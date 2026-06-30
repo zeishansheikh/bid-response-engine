@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { api, Workspace, DashboardData, ChecklistItem } from '../services/api';
+import { WorkspaceContextBanner } from './WorkspaceContextBanner';
 
 interface ReportsProps {
   workspaceId: string | null;
@@ -335,6 +336,8 @@ export function Reports({ workspaceId }: ReportsProps) {
 
   return (
     <div className="space-y-6 pb-12">
+      <WorkspaceContextBanner workspaceId={workspaceId} />
+      
       {/* Header */}
       <div className="flex justify-between items-center bg-gray-900/35 p-5 border border-[#263042]/50 rounded-2xl">
         <div className="space-y-1">

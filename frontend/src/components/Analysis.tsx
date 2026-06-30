@@ -25,6 +25,7 @@ import {
 } from 'recharts';
 import { api, ChecklistItem, DashboardData, Workspace } from '../services/api';
 import { AppView } from '../types';
+import { WorkspaceContextBanner } from './WorkspaceContextBanner';
 
 interface AnalysisProps {
   workspaceId: string | null;
@@ -114,6 +115,8 @@ export function Analysis({ workspaceId, onNavigate }: AnalysisProps) {
 
   return (
     <div className="space-y-8 pb-20">
+      <WorkspaceContextBanner workspaceId={workspaceId} />
+      
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-[#263042]/55 pb-6 shrink-0">
         <div>

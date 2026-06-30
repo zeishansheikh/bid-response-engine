@@ -10,6 +10,7 @@ import {
   ChevronUp 
 } from 'lucide-react';
 import { api, ChecklistItem, notificationService } from '../services/api';
+import { WorkspaceContextBanner } from './WorkspaceContextBanner';
 
 interface ComplianceProps {
   workspaceId: string | null;
@@ -77,6 +78,8 @@ export function Compliance({ workspaceId }: ComplianceProps) {
 
   return (
     <div className="space-y-8 pb-20 h-full flex flex-col">
+      <WorkspaceContextBanner workspaceId={workspaceId} />
+      
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-[#263042]/55 pb-6 shrink-0">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-white">Compliance Matrix</h1>
@@ -198,6 +201,7 @@ interface MatrixRowProps {
   status: 'matched' | 'partial' | 'gap';
   confidence: number;
   evidenceId: string | null;
+  key?: any;
 }
 
 function MatrixRow({ number, page, category, text, status, confidence, evidenceId }: MatrixRowProps) {

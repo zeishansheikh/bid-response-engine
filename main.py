@@ -20,6 +20,60 @@ from services.scoring_service import (
     compute_win_probability,
     decide
 )
+import json
+
+def update_workspace_metadata(workspace_id: str, status: str = None, error: str = None, failed_stage: str = None, budget: float = None, competitors: int = None, **kwargs):
+    # 1. Fetch current sector and status
+    rows = execute_query("SELECT name, sector, status FROM workspaces WHERE id = %s;", (workspace_id,), fetch=True)
+    if not rows:
+        return
+    current_sector = rows[0].get("sector") or "Cloud Infrastructure"
+    current_status = rows[0].get("status")
+    
+    # 2. Parse as JSON if possible, otherwise construct dict
+    metadata = {}
+    if current_sector.strip().startswith("{") and current_sector.strip().endswith("}"):
+        try:
+            metadata = json.loads(current_sector)
+        except Exception:
+            metadata = {"sector": current_sector}
+    else:
+        metadata = {"sector": current_sector}
+        
+    # 3. Update fields
+    if status is not None:
+        current_status = status
+    if error is not None:
+        metadata["error_message"] = error
+    else:
+        metadata.pop("error_message", None)
+        
+    if failed_stage is not None:
+        metadata["failed_stage"] = failed_stage
+    else:
+        metadata.pop("failed_stage", None)
+        
+    if budget is not None:
+        metadata["budget"] = budget
+    if competitors is not None:
+        metadata["competitor_count"] = competitors
+        
+    # Track Audit Trail
+    audit_trail = metadata.get("audit_trail", [])
+    if status is not None:
+        audit_trail.append({
+            "action": f"Status changed to {status}",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "status": "Success" if error is None else "Failed"
+        })
+    metadata["audit_trail"] = audit_trail
+        
+    for k, v in kwargs.items():
+        metadata[k] = v
+        
+    # 4. Save back to workspaces table
+    serialized = json.dumps(metadata)
+    execute_query("UPDATE workspaces SET sector = %s, status = %s WHERE id = %s;", (serialized, current_status, workspace_id))
 
 class ScoreRequest(BaseModel):
     rfp_budget: float
@@ -246,9 +300,11 @@ def extract_workspace_rfp(workspace_id: str):
     # Verify document exists
     doc = execute_query("SELECT raw_text FROM rfp_documents WHERE workspace_id = %s;", (workspace_id,), fetch=True)
     if not doc:
+        update_workspace_metadata(workspace_id, status="Extraction Failed", error="No RFP document uploaded", failed_stage="Extracting")
         raise HTTPException(status_code=404, detail="No RFP document uploaded for this workspace.")
         
     raw_text = doc[0]["raw_text"]
+    update_workspace_metadata(workspace_id, status="Extracting")
     
     try:
         # Perform extraction
@@ -279,13 +335,30 @@ def extract_workspace_rfp(workspace_id: str):
                 
             # 3. Insert evaluation criteria
             criteria = extracted_data.get("evaluation_criteria", [])
+            print(f"[DEBUG] Processed evaluation_criteria before DB insertion: {criteria}")
             for c in criteria:
+                name = c.get("name")
+                weight = c.get("weight_pct")
+                
+                # Check if weight is numeric
+                is_numeric = False
+                if weight is not None:
+                    try:
+                        float(weight)
+                        is_numeric = True
+                    except (ValueError, TypeError):
+                        pass
+                
+                if not is_numeric:
+                    print(f"[WARNING] Skipping evaluation criterion '{name}' because its weight_pct is non-numeric: {weight}")
+                    continue
+                
                 cur.execute(
                     """
                     INSERT INTO evaluation_criteria (workspace_id, criterion_name, weight_pct)
                     VALUES (%s, %s, %s);
                     """,
-                    (workspace_id, c.get("name"), c.get("weight_pct"))
+                    (workspace_id, name, weight)
                 )
                 
             # 4. Insert QA sections
@@ -300,6 +373,22 @@ def extract_workspace_rfp(workspace_id: str):
                 )
                 
             conn.commit()
+            
+            # Update workspace metadata with extracted budget & deadline if found
+            budget_val = None
+            deadline_val = None
+            if isinstance(extracted_data, dict):
+                budgets = extracted_data.get("budget_figures", [])
+                if budgets and len(budgets) > 0:
+                    budget_val = budgets[0].get("amount_pkr")
+                deadline_val = extracted_data.get("submission_deadline")
+                
+            update_workspace_metadata(
+                workspace_id, 
+                status="Extracted", 
+                budget=budget_val, 
+                submission_deadline=deadline_val
+            )
             return extracted_data
             
         except Exception as db_err:
@@ -310,7 +399,44 @@ def extract_workspace_rfp(workspace_id: str):
             conn.close()
             
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+        import sys
+        import traceback
+        
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        tb_frames = traceback.extract_tb(exc_traceback)
+        
+        log_lines = []
+        log_lines.append("================ DETAILED EXTRACTION ERROR ================")
+        log_lines.append(f"Workspace ID: {workspace_id}")
+        log_lines.append(f"Exception Type: {exc_type.__name__ if exc_type else 'Unknown'}")
+        log_lines.append(f"Exception Message: {str(e)}")
+        log_lines.append("\nStack Trace (Innermost first):")
+        
+        for frame_summary in reversed(tb_frames):
+            log_lines.append(f"  File: {frame_summary.filename}")
+            log_lines.append(f"  Line: {frame_summary.lineno}")
+            log_lines.append(f"  Function: {frame_summary.name}")
+            log_lines.append(f"  Statement: {frame_summary.line}")
+            log_lines.append("")
+            
+        current_tb = exc_traceback
+        while current_tb and current_tb.tb_next:
+            current_tb = current_tb.tb_next
+        if current_tb:
+            frame = current_tb.tb_frame
+            log_lines.append("Local Variables at failure point:")
+            for var_name, var_val in frame.f_locals.items():
+                val_str = repr(var_val)
+                if len(val_str) > 1000:
+                    val_str = val_str[:1000] + "... [TRUNCATED]"
+                log_lines.append(f"  {var_name} = {val_str}")
+        
+        log_lines.append("===========================================================")
+        detailed_log = "\n".join(log_lines)
+        print(detailed_log)
+        
+        update_workspace_metadata(workspace_id, status="Extraction Failed", error=str(e), failed_stage="Extracting")
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}\n\n{detailed_log}")
 
 @app.get("/workspaces/{workspace_id}/requirements")
 def get_workspace_requirements(workspace_id: str):
@@ -339,21 +465,14 @@ def match_workspace_capabilities(workspace_id: str):
         "SELECT id, requirement_text, category, source_page FROM requirements WHERE workspace_id = %s;",
         (workspace_id,),
         fetch=True
-    )
+    ) or []
     
-    # 3. Fetch all qa_sections for the workspace
-    qa_sections = execute_query(
-        "SELECT id, question_text, section_order FROM qa_sections WHERE workspace_id = %s;",
-        (workspace_id,),
-        fetch=True
-    )
-    
+    update_workspace_metadata(workspace_id, status="Matching")
     provider = os.getenv("LLM_PROVIDER", "anthropic").lower()
     
     try:
-        # Clear existing matches and drafts
+        # Clear existing matches
         execute_query("DELETE FROM compliance_checklist WHERE workspace_id = %s;", (workspace_id,))
-        execute_query("DELETE FROM draft_sections WHERE workspace_id = %s;", (workspace_id,))
         
         # Match requirements
         print(f"Matching {len(requirements)} requirements...")
@@ -387,6 +506,34 @@ def match_workspace_capabilities(workspace_id: str):
             if provider == "groq":
                 time.sleep(2)
                 
+        update_workspace_metadata(workspace_id, status="Matched")
+        return {"message": "Capabilities matched and compliance checklist generated successfully."}
+        
+    except Exception as e:
+        update_workspace_metadata(workspace_id, status="Matching Failed", error=str(e), failed_stage="Matching")
+        raise HTTPException(status_code=500, detail=f"Match capabilities failed: {str(e)}")
+
+@app.post("/workspaces/{workspace_id}/generate-proposal")
+def generate_workspace_proposal(workspace_id: str):
+    # Verify workspace exists
+    ws = execute_query("SELECT id FROM workspaces WHERE id = %s;", (workspace_id,), fetch=True)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+        
+    # Fetch all qa_sections for the workspace
+    qa_sections = execute_query(
+        "SELECT id, question_text, section_order FROM qa_sections WHERE workspace_id = %s;",
+        (workspace_id,),
+        fetch=True
+    ) or []
+    
+    update_workspace_metadata(workspace_id, status="Generating Proposal")
+    provider = os.getenv("LLM_PROVIDER", "anthropic").lower()
+    
+    try:
+        # Clear existing draft sections
+        execute_query("DELETE FROM draft_sections WHERE workspace_id = %s;", (workspace_id,))
+        
         # Match and draft QA sections (questions)
         print(f"Drafting {len(qa_sections)} QA sections...")
         for q in qa_sections:
@@ -411,10 +558,11 @@ def match_workspace_capabilities(workspace_id: str):
             if provider == "groq":
                 time.sleep(2)
                 
-        return {"message": "Capabilities matched and drafts generated successfully."}
-        
+        update_workspace_metadata(workspace_id, status="Proposal Generated")
+        return {"message": "Proposal drafts generated successfully."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Match capabilities failed: {str(e)}")
+        update_workspace_metadata(workspace_id, status="Proposal Generation Failed", error=str(e), failed_stage="Generating Proposal")
+        raise HTTPException(status_code=500, detail=f"Proposal generation failed: {str(e)}")
 
 @app.get("/workspaces/{workspace_id}/checklist")
 def get_workspace_checklist(workspace_id: str):
@@ -430,7 +578,7 @@ def get_workspace_checklist(workspace_id: str):
         JOIN requirements r ON c.requirement_id = r.id
         WHERE c.workspace_id = %s;
     """
-    checklist = execute_query(query, (workspace_id,), fetch=True)
+    checklist = execute_query(query, (workspace_id,), fetch=True) or []
     
     # Perform gap-first sorting (sorting: gap -> partial -> matched; within each, legal/certification categories first)
     status_order = {"gap": 1, "partial": 2, "matched": 3}
@@ -454,20 +602,29 @@ def calculate_workspace_score(workspace_id: str, req_body: ScoreRequest):
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found.")
     
-    sector = ws[0]["sector"]
+    sector_raw = ws[0]["sector"] or "Cloud Infrastructure"
+    sector = sector_raw
+    if sector_raw.strip().startswith("{") and sector_raw.strip().endswith("}"):
+        try:
+            metadata = json.loads(sector_raw)
+            sector = metadata.get("sector") or "Cloud Infrastructure"
+        except Exception:
+            pass
+            
+    update_workspace_metadata(workspace_id, status="Scoring", budget=req_body.rfp_budget, competitors=req_body.competitor_count)
     
     try:
         # 1. Fetch capability library
         capability_library = execute_query(
             "SELECT sector, contract_value FROM capability_library;",
             fetch=True
-        )
+        ) or []
         
         # 2. Fetch historical bids
         historical_bids = execute_query(
             "SELECT sector, won FROM historical_bids;",
             fetch=True
-        )
+        ) or []
         
         # 3. Fetch checklist
         query_checklist = """
@@ -477,7 +634,7 @@ def calculate_workspace_score(workspace_id: str, req_body: ScoreRequest):
             JOIN requirements r ON c.requirement_id = r.id
             WHERE c.workspace_id = %s;
         """
-        checklist = execute_query(query_checklist, (workspace_id,), fetch=True)
+        checklist = execute_query(query_checklist, (workspace_id,), fetch=True) or []
         
         # Calculate sub-scores
         budget_alignment = compute_budget_alignment_score(req_body.rfp_budget, sector, capability_library)
@@ -505,6 +662,8 @@ def calculate_workspace_score(workspace_id: str, req_body: ScoreRequest):
             (workspace_id, win_prob, budget_alignment, past_win_rate, compliance_rate, competitor, decision, rationale)
         )
         
+        update_workspace_metadata(workspace_id, status="Ready")
+        
         return {
             "win_probability": win_prob,
             "budget_alignment_score": budget_alignment,
@@ -516,6 +675,7 @@ def calculate_workspace_score(workspace_id: str, req_body: ScoreRequest):
         }
         
     except Exception as e:
+        update_workspace_metadata(workspace_id, status="Scoring Failed", error=str(e), failed_stage="Scoring")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/workspaces/{workspace_id}/dashboard")

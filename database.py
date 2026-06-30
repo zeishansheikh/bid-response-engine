@@ -13,12 +13,88 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
+import sys
+import io
+import urllib.error
+
+def open_request(req):
+    try:
+        return urllib.request.urlopen(req)
+    except urllib.error.HTTPError as e:
+        url = req.full_url
+        method = req.get_method()
+        
+        # Mask Authorization / API key headers
+        masked_headers = {}
+        for k, v in req.header_items():
+            k_lower = k.lower()
+            if "auth" in k_lower or "key" in k_lower or "token" in k_lower or "api" in k_lower:
+                masked_headers[k] = "[MASKED]"
+            else:
+                masked_headers[k] = v
+        masked_headers_str = json.dumps(masked_headers, indent=2)
+
+        # Get payload if present
+        payload_str = None
+        if req.data:
+            try:
+                payload_str = req.data.decode("utf-8")
+                try:
+                    payload_json = json.loads(payload_str)
+                    payload_str = json.dumps(payload_json, indent=2)
+                except Exception:
+                    pass
+            except Exception:
+                payload_str = str(req.data)
+
+        status_code = e.code
+        resp_headers = str(e.headers)
+
+        try:
+            resp_body_bytes = e.read()
+            resp_body = resp_body_bytes.decode("utf-8")
+            # Override read method of exception so subsequent reads still work
+            e.read = io.BytesIO(resp_body_bytes).read
+        except Exception as read_err:
+            resp_body = f"<Error reading response body: {read_err}>"
+
+        log_lines = [
+            "================================================================================",
+            f"REQUEST URL: {url}",
+            f"HTTP METHOD: {method}",
+            f"REQUEST HEADERS: {masked_headers_str}",
+            f"REQUEST JSON PAYLOAD: {payload_str}" if payload_str is not None else "REQUEST JSON PAYLOAD: None",
+            f"HTTP STATUS CODE: {status_code}",
+            f"FULL RESPONSE HEADERS:\n{resp_headers}",
+            f"FULL RESPONSE BODY returned by Supabase:\n{resp_body}",
+            "================================================================================"
+        ]
+        print("\n".join(log_lines), file=sys.stderr, flush=True)
+        raise e
+
+
 class Row(dict):
     """A dictionary subclass that supports positional index access like a tuple, matching psycopg2 row behaviors."""
     def __getitem__(self, key):
         if isinstance(key, int):
             return list(self.values())[key]
         return super().__getitem__(key)
+
+def safe_float(val):
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+def safe_int(val):
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
 
 def execute_query_rest(query, params=None):
     """Translates standard SQL queries into PostgREST API requests to Supabase."""
@@ -31,26 +107,27 @@ def execute_query_rest(query, params=None):
     }
     
     if q.startswith("INSERT INTO workspaces"):
-        # INSERT INTO workspaces (name, sector, status) VALUES (%s, %s, 'draft')
+        # Can handle both (name, sector, status) and (name, sector)
         name, sector = params[0], params[1]
-        data = {"name": name, "sector": sector, "status": "draft"}
+        status = params[2] if len(params) > 2 else "draft"
+        data = {"name": name, "sector": sector, "status": status}
         req = urllib.request.Request(
             f"{SUPABASE_URL}/rest/v1/workspaces",
             data=json.dumps(data).encode("utf-8"),
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
             
-    elif q.startswith("SELECT id FROM workspaces WHERE id =") or q.startswith("SELECT id, name, sector FROM workspaces WHERE id ="):
+    elif q.startswith("SELECT id FROM workspaces WHERE id =") or q.startswith("SELECT id, name, sector FROM workspaces WHERE id =") or q.startswith("SELECT name, sector, status FROM workspaces WHERE id =") or q.startswith("SELECT id, name, sector, status FROM workspaces WHERE id =") or q.startswith("SELECT id, name, sector FROM workspaces WHERE id ="):
         ws_id = params[0]
         req = urllib.request.Request(
-            f"{SUPABASE_URL}/rest/v1/workspaces?id=eq.{ws_id}&select=id,name,sector",
+            f"{SUPABASE_URL}/rest/v1/workspaces?id=eq.{ws_id}&select=id,name,sector,status,created_at",
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("SELECT raw_text FROM rfp_documents WHERE workspace_id ="):
@@ -60,7 +137,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("DELETE FROM rfp_documents WHERE workspace_id ="):
@@ -70,7 +147,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="DELETE"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             resp.read()
             return []
 
@@ -83,7 +160,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("DELETE FROM requirements WHERE workspace_id ="):
@@ -93,7 +170,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="DELETE"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             resp.read()
             return []
 
@@ -104,7 +181,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="DELETE"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             resp.read()
             return []
 
@@ -115,7 +192,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="DELETE"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             resp.read()
             return []
 
@@ -128,31 +205,31 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("INSERT INTO evaluation_criteria"):
         ws_id, name, weight = params[0], params[1], params[2]
-        data = {"workspace_id": ws_id, "criterion_name": name, "weight_pct": float(weight)}
+        data = {"workspace_id": ws_id, "criterion_name": name, "weight_pct": safe_float(weight)}
         req = urllib.request.Request(
             f"{SUPABASE_URL}/rest/v1/evaluation_criteria",
             data=json.dumps(data).encode("utf-8"),
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("INSERT INTO qa_sections"):
         ws_id, text, order = params[0], params[1], params[2]
-        data = {"workspace_id": ws_id, "question_text": text, "section_order": int(order)}
+        data = {"workspace_id": ws_id, "question_text": text, "section_order": safe_int(order)}
         req = urllib.request.Request(
             f"{SUPABASE_URL}/rest/v1/qa_sections",
             data=json.dumps(data).encode("utf-8"),
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("SELECT COUNT(*) FROM requirements WHERE workspace_id ="):
@@ -162,7 +239,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
 
@@ -172,7 +249,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
 
@@ -183,7 +260,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
 
@@ -193,7 +270,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
 
@@ -204,7 +281,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
 
@@ -214,7 +291,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
 
@@ -235,7 +312,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             all_rows = json.loads(resp.read().decode("utf-8"))
             
         # Calculate similarity in Python
@@ -285,7 +362,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("SELECT id, question_text, section_order FROM qa_sections WHERE workspace_id ="):
@@ -295,7 +372,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("DELETE FROM compliance_checklist WHERE workspace_id ="):
@@ -305,7 +382,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="DELETE"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             resp.read()
             return []
 
@@ -316,7 +393,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="DELETE"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             resp.read()
             return []
 
@@ -327,7 +404,7 @@ def execute_query_rest(query, params=None):
             "workspace_id": ws_id,
             "requirement_id": req_id,
             "match_status": status,
-            "confidence_score": float(confidence),
+            "confidence_score": safe_float(confidence) if confidence is not None else 0.0,
             "evidence_capability_id": evidence_id
         }
         req = urllib.request.Request(
@@ -336,7 +413,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("INSERT INTO draft_sections"):
@@ -353,7 +430,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif "compliance_checklist" in q and "JOIN requirements" in q:
@@ -364,7 +441,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             items = json.loads(resp.read().decode("utf-8"))
             
         flat_items = []
@@ -398,7 +475,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
 
@@ -408,7 +485,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
 
@@ -420,7 +497,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("SELECT id, name, sector, status, created_at FROM workspaces"):
@@ -429,7 +506,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("DELETE FROM workspaces WHERE id ="):
@@ -439,7 +516,49 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="DELETE"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
+            resp.read()
+            return []
+
+    elif q.startswith("UPDATE workspaces SET status ="):
+        status, ws_id = params[0], params[1]
+        data = {"status": status}
+        req = urllib.request.Request(
+            f"{SUPABASE_URL}/rest/v1/workspaces?id=eq.{ws_id}",
+            data=json.dumps(data).encode("utf-8"),
+            headers=headers,
+            method="PATCH"
+        )
+        with open_request(req) as resp:
+            resp.read()
+            return []
+
+    elif q.startswith("UPDATE workspaces SET sector = %s, status = %s WHERE id ="):
+        sector, status, ws_id = params[0], params[1], params[2]
+        data = {"sector": sector, "status": status}
+        url = f"{SUPABASE_URL}/rest/v1/workspaces?id=eq.{ws_id}"
+        print(f"[Debug REST] PATCH URL: {url}")
+        print(f"[Debug REST] PATCH Data: {data}")
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(data).encode("utf-8"),
+            headers=headers,
+            method="PATCH"
+        )
+        with open_request(req) as resp:
+            resp.read()
+            return []
+
+    elif q.startswith("UPDATE workspaces SET sector ="):
+        sector, ws_id = params[0], params[1]
+        data = {"sector": sector}
+        req = urllib.request.Request(
+            f"{SUPABASE_URL}/rest/v1/workspaces?id=eq.{ws_id}",
+            data=json.dumps(data).encode("utf-8"),
+            headers=headers,
+            method="PATCH"
+        )
+        with open_request(req) as resp:
             resp.read()
             return []
 
@@ -450,7 +569,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="DELETE"
         )
-        with urllib.request.urlopen(req1) as resp:
+        with open_request(req1) as resp:
             resp.read()
         
         # Delete capability library
@@ -459,7 +578,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="DELETE"
         )
-        with urllib.request.urlopen(req2) as resp:
+        with open_request(req2) as resp:
             resp.read()
         return []
 
@@ -471,9 +590,9 @@ def execute_query_rest(query, params=None):
             "project_title": title,
             "sector": sector,
             "certification": cert,
-            "year_completed": int(year) if year is not None else None,
-            "contract_value": float(value) if value is not None else None,
-            "duration_months": int(duration) if duration is not None else None,
+            "year_completed": safe_int(year),
+            "contract_value": safe_float(value),
+            "duration_months": safe_int(duration),
             "client_type": client,
             "summary_text": summary
         }
@@ -483,7 +602,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("INSERT INTO capability_embeddings"):
@@ -503,7 +622,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("SELECT COUNT(*) FROM capability_library"):
@@ -512,7 +631,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
 
@@ -522,7 +641,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
 
@@ -533,7 +652,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="DELETE"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             resp.read()
             return []
 
@@ -541,11 +660,11 @@ def execute_query_rest(query, params=None):
         ws_id, win_prob, budget_score, win_rate_score, compliance_rate, competitor, decision, rationale = params
         data = {
             "workspace_id": ws_id,
-            "win_probability": float(win_prob),
-            "budget_alignment_score": float(budget_score),
-            "past_win_rate_score": float(win_rate_score),
-            "compliance_pass_rate": float(compliance_rate),
-            "competitor_score": float(competitor),
+            "win_probability": safe_float(win_prob) if win_prob is not None else 0.0,
+            "budget_alignment_score": safe_float(budget_score) if budget_score is not None else 0.0,
+            "past_win_rate_score": safe_float(win_rate_score) if win_rate_score is not None else 0.0,
+            "compliance_pass_rate": safe_float(compliance_rate) if compliance_rate is not None else 0.0,
+            "competitor_score": safe_float(competitor) if competitor is not None else 0.0,
             "go_no_go": decision,
             "rationale": rationale
         }
@@ -555,7 +674,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("SELECT win_probability, budget_alignment_score, past_win_rate_score, compliance_pass_rate, competitor_score, go_no_go, rationale FROM bid_scores WHERE workspace_id ="):
@@ -565,7 +684,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("SELECT sector, contract_value FROM capability_library"):
@@ -574,7 +693,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("SELECT sector, won FROM historical_bids"):
@@ -583,7 +702,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("SELECT COUNT(*) FROM historical_bids"):
@@ -592,7 +711,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             rows = json.loads(resp.read().decode("utf-8"))
             return [{"count": len(rows)}]
 
@@ -602,7 +721,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("SELECT workspace_id, win_probability, compliance_pass_rate, go_no_go FROM bid_scores") and "WHERE" not in q:
@@ -611,7 +730,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif q.startswith("SELECT id, file_path, uploaded_at FROM rfp_documents WHERE workspace_id ="):
@@ -621,7 +740,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     elif "draft_sections" in q and "JOIN qa_sections" in q:
@@ -631,7 +750,7 @@ def execute_query_rest(query, params=None):
             headers=headers,
             method="GET"
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_request(req) as resp:
             items = json.loads(resp.read().decode("utf-8"))
             
         flat_items = []
@@ -731,6 +850,13 @@ def execute_query(query, params=None, fetch=False):
                 return [Row(r) for r in results]
             return results
         except Exception as rest_err:
+            import urllib.error
+            if isinstance(rest_err, urllib.error.HTTPError):
+                try:
+                    err_body = rest_err.read().decode("utf-8")
+                    print(f"[Error] REST API query fallback HTTP Error Body: {err_body}")
+                except Exception:
+                    pass
             print(f"[Error] REST API query fallback failed: {rest_err}")
             raise db_err
 

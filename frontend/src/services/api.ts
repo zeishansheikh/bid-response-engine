@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
 export interface Workspace {
   id: string;
@@ -180,6 +180,18 @@ export const api = {
   async getWorkspaceProposal(workspaceId: string): Promise<any[]> {
     const res = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/proposal`);
     if (!res.ok) throw new Error('Failed to fetch workspace proposal drafts');
+    return res.json();
+  },
+
+  // Generate Proposal Drafts API
+  async generateProposal(workspaceId: string): Promise<any> {
+    const res = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/generate-proposal`, {
+      method: 'POST'
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to generate proposal drafts');
+    }
     return res.json();
   }
 };

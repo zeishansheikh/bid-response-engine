@@ -13,9 +13,9 @@ Schema:
 {
   "submission_deadline": "YYYY-MM-DD or YYYY-MM-DD HH:MM, or null",
   "budget_figures": [{"label": "string", "amount_pkr": number or null, "raw_text": "string"}],
-  "evaluation_criteria": [{"name": "string", "weight_pct": number}],
+  "evaluation_criteria": [{"name": "string", "weight_pct": number or null}],
   "mandatory_requirements": [{"text": "string", "category": "technical|financial|legal|experience|certification|other", "page": number or null}],
-  "qa_sections": [{"question": "string", "order": number}]
+  "qa_sections": [{"question": "string", "order": number or null}]
 }
 
 Rules:
@@ -110,7 +110,7 @@ def merge_extractions(extractions: list[dict]) -> dict:
                 merged["qa_sections"].append(q)
                 
     # Sort QA sections by order if order is present
-    merged["qa_sections"] = sorted(merged["qa_sections"], key=lambda x: x.get("order", 0))
+    merged["qa_sections"] = sorted(merged["qa_sections"], key=lambda x: x.get("order") if x.get("order") is not None else 0)
     
     return merged
 
@@ -142,7 +142,9 @@ def extract_single_chunk(raw_text: str, provider: str, model: str, client) -> di
     try:
         response_text = call_llm(client, provider, model, EXTRACTION_SYSTEM_PROMPT, messages)
         cleaned_text = clean_json_text(response_text)
-        return json.loads(cleaned_text)
+        result = json.loads(cleaned_text)
+        print(f"[DEBUG] Raw evaluation_criteria from LLM: {result.get('evaluation_criteria')}")
+        return result
     except (json.JSONDecodeError, Exception) as e:
         print(f"First extraction attempt failed: {e}. Retrying once...")
         time.sleep(2)  # brief wait before retry
@@ -156,7 +158,9 @@ def extract_single_chunk(raw_text: str, provider: str, model: str, client) -> di
         
         retry_text = call_llm(client, provider, model, EXTRACTION_SYSTEM_PROMPT, messages)
         cleaned_retry_text = clean_json_text(retry_text)
-        return json.loads(cleaned_retry_text)
+        result = json.loads(cleaned_retry_text)
+        print(f"[DEBUG] Raw evaluation_criteria from LLM (retry): {result.get('evaluation_criteria')}")
+        return result
 
 def extract_rfp_structure(raw_text: str) -> dict:
     provider = os.getenv("LLM_PROVIDER", "anthropic").lower()

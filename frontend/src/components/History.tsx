@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { api, Workspace, notificationService } from '../services/api';
 import { AppView } from '../types';
+import { WorkspaceContextBanner } from './WorkspaceContextBanner';
 
 interface HistoryProps {
   workspaceId: string | null;
@@ -159,6 +160,8 @@ export function History({ workspaceId, setWorkspaceId, onNavigate }: HistoryProp
 
   return (
     <div className="space-y-6 pb-20 h-full flex flex-col">
+      <WorkspaceContextBanner workspaceId={workspaceId} />
+      
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shrink-0">
         <div>
           <h1 className="text-display-sm font-semibold tracking-tight text-white flex items-center gap-2.5">

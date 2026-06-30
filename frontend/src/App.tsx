@@ -78,7 +78,11 @@ export default function App() {
     try {
       const list = await api.getWorkspaces();
       setWorkspaces(list);
-      if (list.length > 0 && !workspaceId) {
+      
+      const savedId = localStorage.getItem('govprop_active_workspace_id');
+      if (savedId && list.some(w => w.id === savedId)) {
+        setWorkspaceId(savedId);
+      } else if (list.length > 0 && !workspaceId) {
         setWorkspaceId(list[0].id);
       }
     } catch (err) {
@@ -87,8 +91,14 @@ export default function App() {
   };
 
   // Hash-based routing to support deep-linking and browser back/forward buttons
-  const navigateToView = (view: AppView) => {
-    window.location.hash = `#/${view}`;
+  const navigateToView = (view: AppView, targetWorkspaceId: string | null = workspaceId) => {
+    if (['landing', 'settings', 'history'].includes(view)) {
+      window.location.hash = `#/${view}`;
+    } else if (targetWorkspaceId) {
+      window.location.hash = `#/workspace/${targetWorkspaceId}/${view}`;
+    } else {
+      window.location.hash = `#/${view}`;
+    }
   };
 
   React.useEffect(() => {
@@ -96,19 +106,48 @@ export default function App() {
   }, [workspaceId]);
 
   React.useEffect(() => {
+    if (workspaceId) {
+      localStorage.setItem('govprop_active_workspace_id', workspaceId);
+      const hash = window.location.hash.replace('#/', '');
+      if (hash && hash.startsWith('workspace/') && !['landing', 'settings', 'history'].includes(currentView)) {
+        const parts = hash.split('/');
+        if (parts[1] !== workspaceId) {
+          window.location.hash = `#/workspace/${workspaceId}/${currentView}`;
+        }
+      } else if (!['landing', 'settings', 'history'].includes(currentView)) {
+        window.location.hash = `#/workspace/${workspaceId}/${currentView}`;
+      }
+    }
+  }, [workspaceId, currentView]);
+
+  React.useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.replace('#/', '');
-      if (hash) {
-        const validViews: AppView[] = [
-          'landing', 'dashboard', 'workspace', 'compliance', 
-          'analysis', 'win-probability', 'editor', 'reports', 'settings', 'history'
-        ];
-        if (validViews.includes(hash as AppView)) {
-          setCurrentView(hash as AppView);
+      if (!hash) {
+        setCurrentView('landing');
+        return;
+      }
+
+      if (hash.startsWith('workspace/')) {
+        const parts = hash.split('/');
+        if (parts.length >= 3) {
+          const wsId = parts[1];
+          const view = parts[2] as AppView;
+          setWorkspaceId(wsId);
+          setCurrentView(view);
           return;
         }
       }
-      setCurrentView('landing');
+
+      const validViews: AppView[] = [
+        'landing', 'dashboard', 'workspace', 'compliance', 
+        'analysis', 'win-probability', 'editor', 'reports', 'settings', 'history'
+      ];
+      if (validViews.includes(hash as AppView)) {
+        setCurrentView(hash as AppView);
+      } else {
+        setCurrentView('landing');
+      }
     };
 
     // Initialize routing on mount
@@ -122,7 +161,7 @@ export default function App() {
     switch (currentView) {
       case 'landing': return <Landing onNavigate={navigateToView} />;
       case 'dashboard': return <Dashboard workspaceId={workspaceId} setWorkspaceId={setWorkspaceId} onNavigate={navigateToView} />;
-      case 'workspace': return <Workspace workspaceId={workspaceId} />;
+      case 'workspace': return <Workspace workspaceId={workspaceId} setWorkspaceId={setWorkspaceId} onNavigate={navigateToView} />;
       case 'compliance': return <Compliance workspaceId={workspaceId} />;
       case 'analysis': return <Analysis workspaceId={workspaceId} onNavigate={navigateToView} />;
       case 'win-probability': return <WinProbability workspaceId={workspaceId} />;

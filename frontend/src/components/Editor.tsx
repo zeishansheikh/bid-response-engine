@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { api } from '../services/api';
+import { WorkspaceContextBanner } from './WorkspaceContextBanner';
 
 interface EditorProps {
   workspaceId: string | null;
@@ -53,6 +54,7 @@ export function Editor({ workspaceId }: EditorProps) {
   const [showStyleGuide, setShowStyleGuide] = React.useState(false);
   const [showCopilot, setShowCopilot] = React.useState(true);
   const [exportStatus, setExportStatus] = React.useState<{ show: boolean; msg: string } | null>(null);
+  const [generatingDraft, setGeneratingDraft] = React.useState(false);
 
   // Dynamic Chat State
   const [chatMessages, setChatMessages] = React.useState<ChatMessageItem[]>([
@@ -175,6 +177,46 @@ export function Editor({ workspaceId }: EditorProps) {
   const editorRef = React.useRef<HTMLDivElement | null>(null);
 
   // Load chat history and workspace proposal drafts on workspaceId change
+  const loadProposal = React.useCallback(async () => {
+    if (!workspaceId) return;
+    try {
+      setLoading(true);
+      const data = await api.getWorkspaceProposal(workspaceId);
+      if (data && data.length > 0) {
+        let html = '';
+        data.forEach((item: any) => {
+          html += `<h2>${item.question_text || 'Proposal Section'}</h2>`;
+          html += `<p>${item.draft_text || '[Empty Section]'}</p>\n`;
+        });
+        setContent(html);
+        if (editorRef.current) {
+          editorRef.current.innerHTML = html;
+        }
+
+        // Build saved drafts list from sections
+        const historyDrafts = data.map((item: any, idx: number) => ({
+          id: item.id || `draft-${idx}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+          preview: (item.draft_text || '').substring(0, 50) + '...',
+          content: `<h2>${item.question_text || 'Section'}</h2><p>${item.draft_text || ''}</p>`,
+          exportedDocx: false,
+          exportedPdf: false
+        }));
+        setDrafts(historyDrafts);
+      } else {
+        setContent('');
+        if (editorRef.current) {
+          editorRef.current.innerHTML = '';
+        }
+        setDrafts([]);
+      }
+    } catch (err) {
+      console.error("Failed to load proposal drafts:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [workspaceId]);
+
   React.useEffect(() => {
     if (!workspaceId) return;
 
@@ -193,56 +235,21 @@ export function Editor({ workspaceId }: EditorProps) {
     }
 
     // 2. Load Draft Proposal Content from Supabase
-    const loadProposal = async () => {
-      try {
-        setLoading(true);
-        const data = await api.getWorkspaceProposal(workspaceId);
-        if (data && data.length > 0) {
-          let html = '';
-          data.forEach((item: any) => {
-            html += `<h2>${item.question_text || 'Proposal Section'}</h2>`;
-            html += `<p>${item.draft_text || '[Empty Section]'}</p>\n`;
-          });
-          setContent(html);
-          if (editorRef.current) {
-            editorRef.current.innerHTML = html;
-          }
-
-          // Build saved drafts list from sections
-          const historyDrafts = data.map((item: any, idx: number) => ({
-            id: item.id || `draft-${idx}`,
-            timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-            preview: (item.draft_text || '').substring(0, 50) + '...',
-            content: `<h2>${item.question_text || 'Section'}</h2><p>${item.draft_text || ''}</p>`,
-            exportedDocx: false,
-            exportedPdf: false
-          }));
-          setDrafts(historyDrafts);
-        } else {
-          // Default instruction block if no drafts generated yet
-          const welcomeHtml = `<h2>Active Proposal Outline</h2>
-<p>No proposal sections have been drafted yet. To generate your proposal draft automatically:</p>
-<ul>
-  <li>Go to the <strong>Compliance Matrix</strong> tab.</li>
-  <li>Click the <strong>Match Capabilities</strong> button to match requirements with your RAG library evidence.</li>
-  <li>The AI will automatically draft responses for each QA section and load them here.</li>
-</ul>
-<p>Alternatively, you can start typing directly in this editor, or use the <strong>AI Proposal Co-Pilot</strong> chat on the right to assist you in drafting specific sections.</p>`;
-          setContent(welcomeHtml);
-          if (editorRef.current) {
-            editorRef.current.innerHTML = welcomeHtml;
-          }
-          setDrafts([]);
-        }
-      } catch (err) {
-        console.error("Failed to load proposal drafts:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     loadProposal();
-  }, [workspaceId]);
+  }, [workspaceId, loadProposal]);
+
+  const handleGenerateProposal = async () => {
+    if (!workspaceId) return;
+    try {
+      setGeneratingDraft(true);
+      await api.generateProposal(workspaceId);
+      await loadProposal();
+    } catch (err: any) {
+      alert("Failed to generate proposal: " + err.message);
+    } finally {
+      setGeneratingDraft(false);
+    }
+  };
 
   // Persist chat messages to localStorage whenever they change
   React.useEffect(() => {
@@ -506,7 +513,10 @@ export function Editor({ workspaceId }: EditorProps) {
   }, [content, saveSuccess]);
 
   return (
-    <div className="flex h-[calc(100vh-140px)] gap-6 pb-6 items-stretch relative">
+    <div className="space-y-6 flex flex-col h-full">
+      <WorkspaceContextBanner workspaceId={workspaceId} />
+
+      <div className="flex flex-1 gap-6 pb-6 items-stretch relative min-h-0">
       {/* CSS stylesheet block for proper MS Word editor formatting inside the canvas */}
       <style>{`
         .word-editor-canvas h1 {
@@ -702,17 +712,53 @@ export function Editor({ workspaceId }: EditorProps) {
           </div>
 
           {/* Editor Canvas with MS Word white page container layout */}
-          <div className="flex-1 overflow-y-auto bg-gray-950/20 p-8 custom-scrollbar">
-            <div className="max-w-3xl mx-auto bg-white border border-slate-300 shadow-[0_15px_40px_rgba(0,0,0,0.4)] rounded-sm p-16 min-h-[580px] text-gray-900 relative">
-              <div
-                ref={editorRef}
-                contentEditable
-                onInput={handleInput}
-                className="w-full h-full min-h-[480px] focus:outline-none text-gray-950 font-sans leading-relaxed text-sm text-left word-editor-canvas"
-                style={{ minHeight: '480px' }}
-                spellCheck="false"
-              />
-            </div>
+          <div className="flex-1 overflow-y-auto bg-gray-950/20 p-8 custom-scrollbar flex items-center justify-center">
+            {loading ? (
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="animate-spin text-[#4F8CFF]" size={32} />
+                <span className="text-gray-400 text-xs">Loading proposal drafts...</span>
+              </div>
+            ) : drafts.length === 0 ? (
+              <div className="glass-panel p-12 rounded-2xl text-center space-y-6 max-w-lg border border-[#263042] bg-[#111827]/80 backdrop-blur-md">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#4F8CFF] to-[#7C3AED] flex items-center justify-center text-white mx-auto shadow-lg shadow-[#4F8CFF]/20">
+                  <Sparkles size={24} className="animate-pulse" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-lg font-bold text-white tracking-tight">AI Proposal Draft Ready</h3>
+                  <p className="text-gray-400 text-xs leading-relaxed">
+                    A compliance requirements analysis and RAG capability matching are complete. Click below to automatically draft the full response proposal.
+                  </p>
+                </div>
+                <button
+                  onClick={handleGenerateProposal}
+                  disabled={generatingDraft}
+                  className="w-full bg-gradient-to-r from-[#4F8CFF] to-[#7C3AED] hover:brightness-110 text-white py-3 px-5 rounded-xl text-xs font-bold transition-all shadow-lg shadow-[#4F8CFF]/15 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {generatingDraft ? (
+                    <>
+                      <Loader2 className="animate-spin" size={14} />
+                      <span>Generating Proposal Draft...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={14} />
+                      <span>Generate Full Proposal Draft</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <div className="max-w-3xl mx-auto bg-white border border-slate-300 shadow-[0_15px_40px_rgba(0,0,0,0.4)] rounded-sm p-16 min-h-[580px] text-gray-900 relative">
+                <div
+                  ref={editorRef}
+                  contentEditable
+                  onInput={handleInput}
+                  className="w-full h-full min-h-[480px] focus:outline-none text-gray-950 font-sans leading-relaxed text-sm text-left word-editor-canvas"
+                  style={{ minHeight: '480px' }}
+                  spellCheck="false"
+                />
+              </div>
+            )}
           </div>
 
         </div>
@@ -910,6 +956,16 @@ export function Editor({ workspaceId }: EditorProps) {
           <span className="text-[9px] font-bold tracking-widest uppercase [writing-mode:vertical-lr] mt-1.5 select-none">AI Co-Pilot</span>
         </button>
       )}
+
+      {exportStatus?.show && (
+        <div className="fixed bottom-6 right-6 bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 z-[9999] border border-emerald-400/20 animate-fade-in-up">
+          <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
+            <CheckSquare size={13} className="text-white" />
+          </div>
+          <span className="text-xs font-bold tracking-wide">{exportStatus.msg}</span>
+        </div>
+      )}
+      </div>
     </div>
   );
 }
@@ -969,15 +1025,6 @@ function ChatMessage({
           </div>
         )}
       </div>
-
-      {exportStatus?.show && (
-        <div className="fixed bottom-6 right-6 bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 z-[9999] border border-emerald-400/20 animate-fade-in-up">
-          <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
-            <CheckSquare size={13} className="text-white" />
-          </div>
-          <span className="text-xs font-bold tracking-wide">{exportStatus.msg}</span>
-        </div>
-      )}
     </div>
   );
 }

@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { api, Workspace, ChecklistItem, DashboardData, notificationService, AppNotification } from '../services/api';
 import { AppView } from '../types';
+import { WorkspaceContextBanner } from './WorkspaceContextBanner';
 
 interface DashboardProps {
   workspaceId: string | null;
@@ -44,6 +45,7 @@ export function Dashboard({ workspaceId, setWorkspaceId, onNavigate }: Dashboard
   const [checklist, setChecklist] = React.useState<ChecklistItem[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const companyName = localStorage.getItem('bidengine_company_name') || 'Acme Federal Solutions';
   
   // New Workspace form state
   const [showNewModal, setShowNewModal] = React.useState(false);
@@ -218,16 +220,16 @@ export function Dashboard({ workspaceId, setWorkspaceId, onNavigate }: Dashboard
 
   // Sparklines Data mapping
   const winProbSparkData = [
-    { v: 22 }, { v: 26 }, { v: 25 }, { v: 29 }, { v: 34 }, { v: 31 }, { v: winProbValue || 20 }
+    { v: winProbValue }, { v: winProbValue }, { v: winProbValue }, { v: winProbValue }
   ];
   const complianceSparkData = [
-    { v: 0 }, { v: 0 }, { v: 0 }, { v: 0 }, { v: 0 }, { v: 0 }, { v: compliancePct }
+    { v: compliancePct }, { v: compliancePct }, { v: compliancePct }, { v: compliancePct }
   ];
   const gapsSparkData = [
-    { v: 33 }, { v: 32 }, { v: 33 }, { v: 30 }, { v: 31 }, { v: 30 }, { v: gapValue || 30 }
+    { v: gapValue }, { v: gapValue }, { v: gapValue }, { v: gapValue }
   ];
   const totalSparkData = [
-    { v: 31 }, { v: 31 }, { v: 31 }, { v: 31 }, { v: 31 }, { v: 31 }, { v: totalValue || 31 }
+    { v: totalValue }, { v: totalValue }, { v: totalValue }, { v: totalValue }
   ];
 
   // Win Probability Trend line data (dynamically calculated based on selected trend period)
@@ -239,17 +241,7 @@ export function Dashboard({ workspaceId, setWorkspaceId, onNavigate }: Dashboard
       const d = new Date();
       d.setDate(now.getDate() - i);
       const label = d.toLocaleString("en-US", { month: "short", day: "numeric" });
-      let score = 20;
-      if (daysCount === 8) {
-        const baseScores = [25, 28, 26, 28, 32, 35, 34, winProbValue || 37];
-        score = baseScores[7 - i];
-      } else {
-        const progress = (29 - i) / 29;
-        const baseCurve = 22 + progress * 13;
-        const noise = Math.sin(progress * 10) * 3;
-        score = Math.round(i === 0 ? (winProbValue || 37) : (baseCurve + noise));
-      }
-      data.push({ date: label, score });
+      data.push({ date: label, score: winProbValue });
     }
     return data;
   }, [winProbValue, trendPeriod]);
@@ -265,10 +257,12 @@ export function Dashboard({ workspaceId, setWorkspaceId, onNavigate }: Dashboard
 
   return (
     <div className="space-y-8 pb-20">
+      <WorkspaceContextBanner workspaceId={workspaceId} />
+      
       {/* Title & Welcome Header Section */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-[#263042]/55 pb-6 shrink-0">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-white">Welcome back, Ahsan 👋</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-white">Welcome to {companyName} 👋</h1>
           <p className="text-sm text-gray-400 mt-1">Here's what's happening with your proposals today.</p>
         </div>
         

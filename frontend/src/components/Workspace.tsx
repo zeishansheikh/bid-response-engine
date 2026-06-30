@@ -1,22 +1,42 @@
 import React from 'react';
-import { Search, FileText, Upload, RefreshCw, CheckCircle, AlertCircle, Loader2, X } from 'lucide-react';
+import { Search, FileText, Upload, RefreshCw, CheckCircle, AlertCircle, Loader2, X, Play } from 'lucide-react';
 import { api, Requirement, notificationService } from '../services/api';
 
 interface WorkspaceProps {
   workspaceId: string | null;
+  setWorkspaceId?: (id: string | null) => void;
+  onNavigate?: (view: any, targetId?: string | null) => void;
 }
 
-export function Workspace({ workspaceId }: WorkspaceProps) {
+export function Workspace({ workspaceId, setWorkspaceId, onNavigate }: WorkspaceProps) {
   const [file, setFile] = React.useState<File | null>(null);
   const [requirements, setRequirements] = React.useState<Requirement[]>([]);
   const [loading, setLoading] = React.useState(false);
-  const [uploading, setUploading] = React.useState(false);
   const [extracting, setExtracting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [successMsg, setSuccessMsg] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [uploadedFileName, setUploadedFileName] = React.useState<string | null>(null);
+  const [workspaceDetails, setWorkspaceDetails] = React.useState<any>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  // Pipeline execution state
+  const [pipelineStep, setPipelineStep] = React.useState<number | null>(null);
+  const [pipelineError, setPipelineError] = React.useState<string | null>(null);
+  const [pipelineFailedStage, setPipelineFailedStage] = React.useState<string | null>(null);
+  const [pipelineWorkspaceId, setPipelineWorkspaceId] = React.useState<string | null>(null);
+
+  const getSectorMeta = (sectorStr: string | undefined) => {
+    if (!sectorStr) return {};
+    if (sectorStr.trim().startsWith('{') && sectorStr.trim().endsWith('}')) {
+      try {
+        return JSON.parse(sectorStr);
+      } catch (e) {
+        return { sector: sectorStr };
+      }
+    }
+    return { sector: sectorStr };
+  };
 
   const loadRequirements = async () => {
     if (!workspaceId) return;
@@ -41,15 +61,26 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
       setRequirements(reqs);
     } catch (err: any) {
       console.error(err);
-      // Reqs might not be extracted yet, so don't show scary error
       setRequirements([]);
     } finally {
       setLoading(false);
     }
   };
 
+  const loadWorkspaceDetails = async () => {
+    if (!workspaceId) return;
+    try {
+      const list = await api.getWorkspaces();
+      const currentWs = list.find(w => w.id === workspaceId);
+      setWorkspaceDetails(currentWs || null);
+    } catch (err) {
+      console.error("Failed to load workspace details:", err);
+    }
+  };
+
   React.useEffect(() => {
     loadRequirements();
+    loadWorkspaceDetails();
   }, [workspaceId]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -77,47 +108,105 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  const handleUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!workspaceId || !file) return;
-
-    const fileName = file.name;
+  const runFullPipeline = async (wsId: string, docFile: File | null, startFromStep = 1) => {
+    setPipelineError(null);
+    setPipelineFailedStage(null);
+    setPipelineWorkspaceId(wsId);
+    
+    let currentStep = startFromStep;
     try {
-      setUploading(true);
-      setError(null);
-      setSuccessMsg(null);
-      notificationService.addNotification('Uploading document', `Uploading "${fileName}" to workspace...`, 'upload');
-      await api.uploadRfp(workspaceId, file);
-      setUploadedFileName(fileName);
-      setSuccessMsg(`File "${fileName}" uploaded successfully! Auto-extracting requirements...`);
-      notificationService.addNotification('Document uploaded', `File "${fileName}" uploaded successfully! Starting extraction...`, 'upload');
+      if (currentStep <= 1 && docFile) {
+        setPipelineStep(1);
+        notificationService.addNotification('Uploading document', `Uploading "${docFile.name}"...`, 'upload');
+        await api.uploadRfp(wsId, docFile);
+        currentStep = 2;
+      }
+      
+      if (currentStep <= 2) {
+        setPipelineStep(2);
+        notificationService.addNotification('Analysis started', 'Extracting RFP structure and requirements...', 'extraction');
+        await api.extractRfp(wsId);
+        currentStep = 3;
+      }
+      
+      if (currentStep <= 3) {
+        setPipelineStep(3);
+        notificationService.addNotification('Compliance matching', 'Matching evidence from capability library...', 'matching');
+        await api.matchCapabilities(wsId);
+        currentStep = 4;
+      }
+      
+      if (currentStep <= 4) {
+        setPipelineStep(4);
+        notificationService.addNotification('Scoring workspace', 'Calculating win probability score...', 'scoring');
+        const defaultBudget = Number(localStorage.getItem('govprop_default_budget')) || 45000000;
+        const defaultCompetitors = Number(localStorage.getItem('govprop_default_competitor_count')) || 3;
+        await api.calculateScore(wsId, defaultBudget, defaultCompetitors);
+        currentStep = 5;
+      }
+      
+      setPipelineStep(5);
+      notificationService.addNotification('Workspace ready', 'The workspace has been fully initialized and is ready for use.', 'info');
+      
+      await new Promise(r => setTimeout(r, 1000));
+      
+      setPipelineStep(null);
+      setPipelineWorkspaceId(null);
       setFile(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
-      setUploading(false);
-
-      // Auto-trigger extraction after successful upload
-      try {
-        setExtracting(true);
-        notificationService.addNotification('Analysis started', `Extracting requirements from "${fileName}"...`, 'extraction');
-        await api.extractRfp(workspaceId);
-        setSuccessMsg(`File "${fileName}" uploaded & requirements extracted successfully!`);
-        notificationService.addNotification('Analysis completed', `Requirements extracted from "${fileName}" successfully!`, 'extraction');
-        await loadRequirements();
-      } catch (extractErr: any) {
-        console.error('Auto-extraction failed:', extractErr);
-        setError(`Upload succeeded but extraction failed: ${extractErr.message || 'Error'}. Click "Run RFP AI Extraction" to retry.`);
-        notificationService.addNotification('Extraction failed', `Auto-extraction failed: ${extractErr.message || 'Error'}`, 'extraction');
-      } finally {
-        setExtracting(false);
+      
+      if (setWorkspaceId) {
+        setWorkspaceId(wsId);
+      }
+      if (onNavigate) {
+        onNavigate('dashboard', wsId);
       }
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Failed to upload document');
-      notificationService.addNotification('Upload failed', `Failed to upload "${fileName}": ${err.message || 'Error'}`, 'upload');
-      setUploading(false);
+      console.error('Pipeline failed:', err);
+      const errMsg = err.message || 'Error occurred';
+      setPipelineError(errMsg);
+      
+      let failedStageName = 'Uploading';
+      if (currentStep === 2) failedStageName = 'Extraction';
+      if (currentStep === 3) failedStageName = 'Matching';
+      if (currentStep === 4) failedStageName = 'Scoring';
+      setPipelineFailedStage(failedStageName);
+      
+      notificationService.addNotification('Pipeline failed', `Failed during ${failedStageName}: ${errMsg}`, 'info');
     }
+  };
+
+  const handleUploadSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file) return;
+    
+    try {
+      const workspaceName = `RFP - ${file.name.replace(/\.[^/.]+$/, "")}`;
+      const defaultSector = localStorage.getItem('govprop_default_sector') || 'Cloud Infrastructure';
+      
+      setPipelineStep(0);
+      setPipelineError(null);
+      setPipelineFailedStage(null);
+      
+      const newWs = await api.createWorkspace(workspaceName, defaultSector);
+      await runFullPipeline(newWs.id, file, 1);
+    } catch (err: any) {
+      console.error(err);
+      setPipelineError(err.message || 'Failed to create workspace');
+      setPipelineFailedStage('Creation');
+    }
+  };
+
+  const handleResume = async () => {
+    if (!workspaceId || !workspaceDetails) return;
+    
+    let resumeStep = 2;
+    if (workspaceDetails.status === 'Matching Failed') resumeStep = 3;
+    if (workspaceDetails.status === 'Scoring Failed') resumeStep = 4;
+    
+    await runFullPipeline(workspaceId, null, resumeStep);
   };
 
   const handleExtract = async () => {
@@ -132,6 +221,7 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
       setSuccessMsg('RFP processed and structure extracted successfully!');
       notificationService.addNotification('Analysis completed', 'RFP processed and structure extracted successfully! (Doc analyzed)', 'extraction');
       await loadRequirements();
+      await loadWorkspaceDetails();
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Extraction failed');
@@ -145,6 +235,11 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
     req.requirement_text.toLowerCase().includes(searchQuery.toLowerCase()) ||
     req.category.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const meta = getSectorMeta(workspaceDetails?.sector);
+  const isFailed = workspaceDetails?.status?.endsWith('Failed');
+  const failedStage = meta.failed_stage || workspaceDetails?.status;
+  const errMsg = meta.error_message || 'Unknown error occurred.';
 
   if (!workspaceId) {
     return (
@@ -175,6 +270,26 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
         <div className="p-4 bg-green-400/10 border border-green-400/20 rounded-xl text-green-400 text-sm flex items-center gap-2">
           <CheckCircle size={16} />
           <span>{successMsg}</span>
+        </div>
+      )}
+
+      {/* Pipeline Recovery Banner */}
+      {isFailed && (
+        <div className="p-4 bg-error/10 border border-error/20 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="space-y-1">
+            <h4 className="text-sm font-bold text-error flex items-center gap-1.5">
+              <AlertCircle size={16} />
+              Analysis Pipeline Failed during {failedStage}
+            </h4>
+            <p className="text-xs text-gray-300 font-semibold">{errMsg}</p>
+          </div>
+          <button
+            onClick={handleResume}
+            className="flex items-center gap-1.5 bg-error hover:bg-error/90 text-white font-bold text-xs px-4 py-2 rounded-lg cursor-pointer transition-all"
+          >
+            <Play size={12} fill="white" />
+            Resume Pipeline
+          </button>
         </div>
       )}
 
@@ -221,12 +336,12 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
           )}
 
           <h3 className="text-title-md font-semibold flex items-center gap-2">
-            <Upload size={18} className="text-primary" />
+            <Upload size={18} className="text-[#4F8CFF]" />
             Upload RFP Document
           </h3>
           
-          <form onSubmit={handleUpload} className="space-y-4">
-            <div className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 relative overflow-hidden group ${file ? 'border-[#4F8CFF]/50 bg-[#4F8CFF]/5' : 'border-outline-variant hover:border-primary/50'}`}>
+          <form onSubmit={handleUploadSubmit} className="space-y-4">
+            <div className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 relative overflow-hidden group ${file ? 'border-[#4F8CFF]/50 bg-[#4F8CFF]/5' : 'border-outline-variant hover:border-[#4F8CFF]/50'}`}>
               <input 
                 type="file"
                 ref={fileInputRef}
@@ -236,7 +351,7 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
               />
               {file ? (
                 <div className="flex flex-col items-center py-2 relative z-20">
-                  <div className="w-12 h-12 rounded-xl bg-[#4F8CFF]/15 border border-[#4F8CFF]/30 flex items-center justify-center text-[#4F8CFF] mb-3 shadow-[0_0_15px_rgba(79,142,255,0.1)]">
+                  <div className="w-12 h-12 rounded-xl bg-[#4F8CFF]/15 border border-[#4F8CFF]/30 flex items-center justify-center text-[#4F8CFF] mb-3 shadow-[0_0_15px_rgba(79,142,255,0.15)]">
                     <FileText size={22} />
                   </div>
                   <span className="text-sm font-bold text-white block max-w-[200px] truncate mb-1">
@@ -260,17 +375,9 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
             {file && (
               <button 
                 type="submit"
-                disabled={uploading}
                 className="w-full bg-[#4F8CFF] hover:bg-[#4F8CFF]/90 text-white py-2.5 rounded-xl font-bold transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
-                {uploading ? (
-                  <>
-                    <Loader2 className="animate-spin" size={16} />
-                    Uploading...
-                  </>
-                ) : (
-                  'Upload Document'
-                )}
+                Upload Document
               </button>
             )}
           </form>
@@ -364,6 +471,92 @@ export function Workspace({ workspaceId }: WorkspaceProps) {
           )}
         </div>
       </div>
+
+      {/* Premium Pipeline Progress Modal */}
+      {pipelineStep !== null && (
+        <div className="fixed inset-0 bg-[#0B1020]/90 backdrop-blur-md flex items-center justify-center z-50">
+          <div className="glass-panel p-8 rounded-2xl max-w-md w-full space-y-6 text-center border border-[#263042]/50 shadow-[0_0_50px_rgba(79,142,255,0.15)] animate-in fade-in zoom-in duration-300">
+            <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full border-4 border-[#263042] border-t-[#4F8CFF] animate-spin" />
+              <FileText className="text-[#4F8CFF] animate-pulse" size={32} />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-lg font-bold text-white">AI Proposal Pipeline</h3>
+              <p className="text-xs text-gray-400">Please wait while we initialize and process your RFP workspace.</p>
+            </div>
+            
+            <div className="space-y-3.5 text-left border-t border-[#263042]/50 pt-5">
+              <PipelineStepItem step={0} current={pipelineStep} label="Create Workspace & Settings" />
+              <PipelineStepItem step={1} current={pipelineStep} label="Upload RFP Document" />
+              <PipelineStepItem step={2} current={pipelineStep} label="AI Requirements Extraction" />
+              <PipelineStepItem step={3} current={pipelineStep} label="Capability Library Matching" />
+              <PipelineStepItem step={4} current={pipelineStep} label="Win Probability Scoring" />
+            </div>
+            
+            {pipelineError && (
+              <div className="p-4 bg-error/10 border border-error/20 rounded-xl text-error text-xs text-left space-y-2">
+                <div className="font-bold flex items-center gap-1.5">
+                  <AlertCircle size={14} />
+                  Failed at stage: {pipelineFailedStage}
+                </div>
+                <p className="leading-relaxed font-semibold opacity-90">{pipelineError}</p>
+                <div className="pt-2 flex gap-2">
+                  <button 
+                    onClick={() => {
+                      let stepToRun = pipelineStep;
+                      if (pipelineFailedStage === 'Creation') {
+                        setPipelineStep(null);
+                      } else {
+                        runFullPipeline(pipelineWorkspaceId!, null, stepToRun);
+                      }
+                    }}
+                    className="bg-error hover:bg-error/95 text-white px-3 py-1.5 rounded-lg font-bold text-[10px] transition-all cursor-pointer"
+                  >
+                    Retry Stage
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setPipelineStep(null);
+                      setPipelineError(null);
+                      loadWorkspaceDetails();
+                      loadRequirements();
+                    }}
+                    className="border border-[#263042] hover:bg-[#263042]/30 text-gray-300 px-3 py-1.5 rounded-lg font-bold text-[10px] transition-all cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+function PipelineStepItem({ step, current, label }: { step: number; current: number; label: string }) {
+  const isCompleted = current > step;
+  const isCurrent = current === step;
+  return (
+    <div className={`flex items-center gap-3 transition-colors duration-200 ${isCompleted ? 'text-green-400' : isCurrent ? 'text-white' : 'text-gray-500'}`}>
+      <div className="shrink-0">
+        {isCompleted ? (
+          <div className="w-5 h-5 rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center text-green-400">
+            <CheckCircle size={12} />
+          </div>
+        ) : isCurrent ? (
+          <div className="w-5 h-5 rounded-full bg-[#4F8CFF]/10 border border-[#4F8CFF] flex items-center justify-center text-[#4F8CFF]">
+            <Loader2 size={12} className="animate-spin" />
+          </div>
+        ) : (
+          <div className="w-5 h-5 rounded-full bg-[#111827] border border-[#263042] flex items-center justify-center text-[10px] font-bold">
+            {step + 1}
+          </div>
+        )}
+      </div>
+      <span className="text-xs font-semibold">{label}</span>
+    </div>
+  );
+}
+

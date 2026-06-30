@@ -21,6 +21,7 @@ import {
   Users
 } from 'lucide-react';
 import { api, ScoreData, ChecklistItem, notificationService } from '../services/api';
+import { WorkspaceContextBanner } from './WorkspaceContextBanner';
 
 interface WinProbabilityProps {
   workspaceId: string | null;
@@ -43,13 +44,34 @@ export function WinProbability({ workspaceId }: WinProbabilityProps) {
       setLoading(true);
       setError(null);
       
-      const [dash, list] = await Promise.all([
+      const [dash, list, wsList] = await Promise.all([
         api.getDashboard(workspaceId),
-        api.getChecklist(workspaceId)
+        api.getChecklist(workspaceId),
+        api.getWorkspaces()
       ]);
       
       setScoreData(dash.score);
       setChecklist(list);
+      
+      const currentWs = wsList.find(w => w.id === workspaceId);
+      if (currentWs) {
+        const sectorRaw = currentWs.sector;
+        let budgetVal = Number(localStorage.getItem('govprop_default_budget')) || 45000000;
+        let competitorsVal = Number(localStorage.getItem('govprop_default_competitor_count')) || 3;
+        
+        if (sectorRaw && sectorRaw.trim().startsWith('{') && sectorRaw.trim().endsWith('}')) {
+          try {
+            const meta = JSON.parse(sectorRaw);
+            if (meta.budget) budgetVal = Number(meta.budget);
+            if (meta.competitor_count) competitorsVal = Number(meta.competitor_count);
+          } catch (e) {
+            console.error("Failed to parse workspace sector JSON metadata:", e);
+          }
+        }
+        
+        setRfpBudget(budgetVal);
+        setCompetitorCount(competitorsVal);
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to load win probability data');
@@ -160,6 +182,8 @@ export function WinProbability({ workspaceId }: WinProbabilityProps) {
 
   return (
     <div className="space-y-8 pb-20">
+      <WorkspaceContextBanner workspaceId={workspaceId} />
+      
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-[#263042]/55 pb-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-white">Win Probability</h1>
@@ -345,7 +369,7 @@ export function WinProbability({ workspaceId }: WinProbabilityProps) {
   );
 }
 
-function InsightRow({ type, title, impact, action }: { type: 'weakness' | 'strength' | 'opportunity', title: string, impact: string, action: string }) {
+function InsightRow({ type, title, impact, action }: { type: 'weakness' | 'strength' | 'opportunity', title: string, impact: string, action: string, key?: any }) {
   const getConfig = () => {
     switch(type) {
       case 'weakness': return { icon: <AlertCircle size={16} className="text-red-400" />, border: 'border-l-red-500 bg-red-500/5' };
